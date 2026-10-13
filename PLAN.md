@@ -168,9 +168,12 @@ See `deploy/fleet/VERIFICATION.md` for results and outstanding acceptance eviden
 - [x] Commit and push the prepared application/deployment changes to main (`574a14c`).
 - [x] Confirm GitHub Build, Check and CodeQL succeed; frontend tests succeed and both Fleet Rust jobs reach integration tests.
 - [x] Diagnose the remaining CI environment failure: `--include-ignored` enables the real GeoIP test without providing `TELEMT_TEST_GEOIP_DATABASE`. Prepare and cache the real monthly DB-IP database before backend tests; keep test assertions unchanged.
-- [ ] Confirm the corrected commit passes every workflow and inspect all GHCR manifests for amd64/arm64 and matching main/SHA tags.
+- [x] Confirm the corrected commit passes every workflow and inspect all GHCR manifests for amd64/arm64 and matching main/SHA tags (`b18711dcc8f0ed8b71f195ab48d1f971f51e0223`).
 
 - [x] Fix four strict stable-Clippy nested-condition findings without changing policy; give DNS integration fixtures a fixed probe round and explicitly verify that the next missing round remains unknown. Production quorum and wall-clock freshness checks remain unchanged.
 - Local validation of this repair: all 22 backend tests passed with disposable PostgreSQL and the real GeoIP database; Rust 1.88 all-target Clippy passed with warnings denied. Final GitHub workflows and GHCR verification are pending for the repair commit.
 - [x] Reproduce and fix the randomized WEB bridge template assertion with an all-underscore valid CSP nonce; retain the template-remnant check, validate nonce length, and execute both POST/PUT browser behavior cases. Replace the probe frame alignment expression with the equivalent MSRV-compatible `is_multiple_of` required by current stable Clippy.
 - GitHub at `59a0048`: Build, Check, CodeQL and all image jobs passed; backend tests and strict lint passed on stable. Remaining Fleet failures were the randomized nonce assertion (1.88) and probe alignment lint (stable). All three public GHCR indexes contain amd64/arm64 and matching `main`/commit tags with the expected revision.
+
+- Final application verification: `b18711d` passed Build (38480488409), Check (38480488425), CodeQL (38480488587), Fleet control and shaping (38480488546), and Fleet images (38480488451). Fleet tests and strict Clippy passed on Rust 1.88 and stable; browser tests passed.
+- Anonymous GHCR inspection confirmed `telemt-admin`, `telemt-node`, and `telemt-probe` indexes contain Linux amd64/arm64; each image config has the exact application commit revision and `main` matches its full-SHA tag. No production deployment or DNS mutation was performed.
