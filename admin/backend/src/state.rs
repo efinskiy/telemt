@@ -16,7 +16,19 @@ pub(crate) struct State {
     pub hash_slots: Arc<tokio::sync::Semaphore>,
     #[cfg(test)]
     pub cloudflare_origin: Option<Arc<str>>,
+    /// Fixed probe round for integration fixtures; production always uses the wall clock.
+    #[cfg(test)]
+    pub probe_round_override: Option<i64>,
     pub origin: Arc<str>, pub assets: Arc<std::path::PathBuf>,
+}
+
+impl State {
+    /// Shares the probe epoch between scheduling and quorum evaluation.
+    pub(crate) fn probe_round(&self) -> i64 {
+        #[cfg(test)]
+        if let Some(round) = self.probe_round_override { return round; }
+        Utc::now().timestamp() / 15
+    }
 }
 
 pub(crate) async fn audit(state: &State, actor: Option<Uuid>, action: &str, target: &str, result: Value) -> Result<()> {

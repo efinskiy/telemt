@@ -169,3 +169,6 @@ See `deploy/fleet/VERIFICATION.md` for results and outstanding acceptance eviden
 - [x] Confirm GitHub Build, Check and CodeQL succeed; frontend tests succeed and both Fleet Rust jobs reach integration tests.
 - [x] Diagnose the remaining CI environment failure: `--include-ignored` enables the real GeoIP test without providing `TELEMT_TEST_GEOIP_DATABASE`. Prepare and cache the real monthly DB-IP database before backend tests; keep test assertions unchanged.
 - [ ] Confirm the corrected commit passes every workflow and inspect all GHCR manifests for amd64/arm64 and matching main/SHA tags.
+
+- [x] Fix four strict stable-Clippy nested-condition findings without changing policy; give DNS integration fixtures a fixed probe round and explicitly verify that the next missing round remains unknown. Production quorum and wall-clock freshness checks remain unchanged.
+- Local validation of this repair: all 22 backend tests passed with disposable PostgreSQL and the real GeoIP database; Rust 1.88 all-target Clippy passed with warnings denied. Final GitHub workflows and GHCR verification are pending for the repair commit.

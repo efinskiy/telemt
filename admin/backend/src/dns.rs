@@ -32,7 +32,7 @@ pub(crate) async fn route(state:&State,user:&Session,parts:&[&str],method:&Metho
                 crate::state::node(state,node).await.map_err(|error|if error.1=="invalid_request"{invalid("dns_member_not_found")}else{error})?;
             }
             for (key,code) in [("record_a_id","dns_invalid_a_record_id"),("record_aaaa_id","dns_invalid_aaaa_record_id")] {
-                if let Some(id)=body.get(key).and_then(Value::as_str).filter(|s|!s.is_empty()){if id.len()!=32||hex::decode(id).is_err(){return Err(invalid(code));}}
+                if let Some(id)=body.get(key).and_then(Value::as_str).filter(|s|!s.is_empty()) && (id.len()!=32||hex::decode(id).is_err()){return Err(invalid(code));}
             }
             if body["record_a_id"].as_str().is_none_or(|s|s.is_empty())&&body["record_aaaa_id"].as_str().is_none_or(|s|s.is_empty()){return Err(invalid("dns_record_required"));}
             let count:i64=sqlx::query_scalar("SELECT count(*) FROM failover_groups").fetch_one(&state.db).await?;

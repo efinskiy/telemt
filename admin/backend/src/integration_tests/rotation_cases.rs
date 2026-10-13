@@ -76,7 +76,7 @@ pub(super) async fn run(state:&State,app:&Router,mock:&Mock,node_id:Uuid,owner:&
     assert_eq!(sqlx::query_scalar::<_,i64>("SELECT count(*) FROM ip_rotations WHERE pool_id=$1 AND state='queued'").bind(pool).fetch_one(&state.db).await.unwrap(),1);
 }
 async fn seed(state:&State,node:Uuid,agents:&[(Uuid,String)],ip:&str,good:bool) {
-    let last=chrono::Utc::now().timestamp()/15-1;let family=if ip.contains(':'){6}else{4};
+    let last=state.probe_round()-1;let family=if ip.contains(':'){6}else{4};
     sqlx::query("DELETE FROM probe_jobs WHERE node_id=$1 AND address=$2").bind(node).bind(ip).execute(&state.db).await.unwrap();
     for offset in 0..6 {for (agent,_) in agents {sqlx::query("INSERT INTO probe_jobs(id,round,agent_id,node_id,family,address,expires_at,completed_at,result) VALUES($1,$2,$3,$4,$5,$6,now()+interval '1 minute',now(),$7)").bind(Uuid::new_v4()).bind(last-offset).bind(agent).bind(node).bind(family).bind(ip).bind(json!({"network_ok":true,"reachable":good})).execute(&state.db).await.unwrap();}}
 }

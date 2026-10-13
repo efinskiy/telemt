@@ -35,7 +35,7 @@ pub(crate) async fn result(ExtractState(state):ExtractState<State>,headers:Heade
     if row.is_none(){return Err(ApiError(StatusCode::CONFLICT,"expired_or_replayed_probe"));}Ok(Json(ok(json!({"accepted":true}))))
 }
 pub(crate) async fn schedule(state:&State)->anyhow::Result<()> {
-    let round=Utc::now().timestamp()/15;
+    let round=state.probe_round();
     // One bounded cross product avoids expiring assignments while issuing thousands of row writes.
     sqlx::query("WITH targets AS (SELECT id AS node_id,4 AS family,document->>'ipv4' AS address FROM nodes WHERE enabled AND coalesce(document->>'ipv4','')<>'' UNION SELECT id,6,document->>'ipv6' FROM nodes WHERE enabled AND coalesce(document->>'ipv6','')<>'' UNION SELECT n.id,CASE WHEN strpos(ip,':')>0 THEN 6 ELSE 4 END,ip FROM ip_pools p JOIN nodes n ON n.id=p.node_id CROSS JOIN LATERAL jsonb_array_elements_text(p.addresses) AS ip WHERE n.enabled) INSERT INTO probe_jobs(id,round,agent_id,node_id,family,address,expires_at) SELECT gen_random_uuid(),$1,a.id,t.node_id,t.family,t.address,now()+interval '14 seconds' FROM targets t CROSS JOIN agents a WHERE a.enabled ON CONFLICT DO NOTHING").bind(round).execute(&state.db).await?;Ok(())
 }
@@ -52,7 +52,7 @@ pub(crate) fn classify(rounds:&[(usize,usize)],complete:bool)->Health {
     if rounds.len()>=2&&rounds[..2].iter().all(|(good,_)|*good>=2){return Health::Healthy;}Health::Unknown
 }
 pub(crate) async fn health(state:&State,node:Uuid,family:i32)->anyhow::Result<Health> {
-    let last=Utc::now().timestamp()/15-1;
+    let last=state.probe_round()-1;
     let document:Value=sqlx::query_scalar("SELECT document FROM nodes WHERE id=$1").bind(node).fetch_one(&state.db).await?;
     let ip=document[if family==4{"ipv4"}else{"ipv6"}].as_str().unwrap_or("");
     let rows=sqlx::query("SELECT j.round,a.network,j.result FROM probe_jobs j JOIN agents a ON a.id=j.agent_id WHERE j.node_id=$1 AND j.family=$2 AND j.round BETWEEN $3-5 AND $3 AND (j.address=$4 OR (j.address IS NULL AND $5)) AND j.completed_at IS NOT NULL AND a.enabled AND a.country='RU' ORDER BY j.round DESC").bind(node).bind(family).bind(last).bind(ip).bind(document["ip_rotated"]!=true).fetch_all(&state.db).await?;

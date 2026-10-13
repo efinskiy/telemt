@@ -71,7 +71,7 @@ async fn postgres_router_auth_operations_probes_and_dns() {
     let mock=Mock{config:Arc::new(std::sync::Mutex::new(json!({"shaping":{"enabled":false}}))),revision:Arc::new(std::sync::Mutex::new("r1".into())),records:Arc::new(std::sync::Mutex::new(HashMap::from([("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".into(),json!({"name":"proxy.test","type":"A","content":"192.0.2.1","ttl":60,"proxied":false,"modified_on":"original"})),("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".into(),json!({"name":"proxy.test","type":"AAAA","content":"2001:db8::1","ttl":60,"proxied":false,"modified_on":"original"}))]))),fail_patch:Arc::new(std::sync::atomic::AtomicBool::new(false)),stall_patch:Arc::new(std::sync::atomic::AtomicBool::new(false)),patch_started:Arc::new(tokio::sync::Notify::new()),user_ready:Arc::new(std::sync::atomic::AtomicBool::new(false))};
     let listener=tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();let port=listener.local_addr().unwrap().port();let mock_app=Router::new().route("/v1/{*path}",any(node)).route("/zones/{*path}",any(cloudflare)).with_state(mock.clone());
     let server=tokio::spawn(async move{axum::serve(listener,mock_app).await.unwrap();});
-    let state=State{db,geoip:Arc::new(crate::geoip::GeoIp::unavailable("missing")),vault:Arc::new(crypto::Vault::new(&[17;32]).unwrap()),client:reqwest::Client::builder().redirect(reqwest::redirect::Policy::none()).no_proxy().timeout(Duration::from_secs(3)).build().unwrap(),hash_slots:Arc::new(tokio::sync::Semaphore::new(4)),cloudflare_origin:Some(format!("http://127.0.0.1:{port}").into()),origin:"https://admin.test".into(),assets:Arc::new("/private/tmp/unavailable-admin-assets".into())};
+    let state=State{db,probe_round_override:Some(chrono::Utc::now().timestamp()/15),geoip:Arc::new(crate::geoip::GeoIp::unavailable("missing")),vault:Arc::new(crypto::Vault::new(&[17;32]).unwrap()),client:reqwest::Client::builder().redirect(reqwest::redirect::Policy::none()).no_proxy().timeout(Duration::from_secs(3)).build().unwrap(),hash_slots:Arc::new(tokio::sync::Semaphore::new(4)),cloudflare_origin:Some(format!("http://127.0.0.1:{port}").into()),origin:"https://admin.test".into(),assets:Arc::new("/private/tmp/unavailable-admin-assets".into())};
     auth::create(&state,"owner","long-test-password-only","owner").await.unwrap();auth::create(&state,"viewer","long-test-password-only","viewer").await.unwrap();
     let app=application(state.clone());let owner=login(&state,&app,"owner").await;let viewer=login(&state,&app,"viewer").await;
     assert_eq!(request(&app,"/api/nodes","GET",json!({}),None,false).await.0,StatusCode::UNAUTHORIZED);
@@ -111,8 +111,11 @@ async fn postgres_router_auth_operations_probes_and_dns() {
     for expected in [StatusCode::OK,StatusCode::CONFLICT] {let response=app.clone().oneshot(Request::builder().method("POST").uri("/agent/results").header("authorization",format!("Bearer {}",agents[0].1)).header("content-type","application/json").body(Body::from(json!({"id":job,"network_ok":true,"reachable":true,"stage":"ok","latency_ms":1}).to_string())).unwrap()).await.unwrap();assert_eq!(response.status(),expected);}
     for node in &nodes {sqlx::query("UPDATE nodes SET collected_at=now(),snapshot=$2 WHERE id=$1").bind(node).bind(json!({"ready":true,"compatibility":{"fingerprint":"a".repeat(64)}})).execute(&state.db).await.unwrap();}
     dns_enrollment::run(&state,&app,&owner,nodes[0],&mock).await;
-    let last=chrono::Utc::now().timestamp()/15-1;
+    let last=state.probe_round()-1;
     for offset in 0..6 {for (agent,_) in &agents {for target in &nodes {for family in [4,6] {sqlx::query("INSERT INTO probe_jobs(id,round,agent_id,node_id,family,expires_at,completed_at,result) VALUES($1,$2,$3,$4,$6,now()+interval '1 minute',now(),$5)").bind(Uuid::new_v4()).bind(last-offset).bind(agent).bind(target).bind(json!({"network_ok":true,"reachable":true})).bind(family).execute(&state.db).await.unwrap();}}}}
+    assert_eq!(probes::health(&state,nodes[0],4).await.unwrap(),probes::Health::Recovered);
+    let mut next_round=state.clone();next_round.probe_round_override=Some(state.probe_round()+1);
+    assert_eq!(probes::health(&next_round,nodes[0],4).await.unwrap(),probes::Health::Unknown);
     let (status,response,_)=request(&app,"/api/groups","POST",json!({"name":"proxy","domain":"proxy.test","zone_id":"00000000000000000000000000000000","record_a_id":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","record_aaaa_id":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","active_node":nodes[0],"node_ids":nodes,"token":"test-dns-token"}),Some(&owner),true).await;
     assert_eq!(status,StatusCode::OK);let group=Uuid::parse_str(response["data"]["id"].as_str().unwrap()).unwrap();
     assert_eq!(request(&app,&format!("/api/groups/{group}/preview"),"POST",json!({"node_id":nodes[1]}),Some(&owner),true).await.0,StatusCode::OK);
@@ -127,7 +130,8 @@ async fn postgres_router_auth_operations_probes_and_dns() {
     assert_eq!(request(&app,&format!("/api/groups/{group}/reconcile"),"POST",json!({}),Some(&owner),true).await.0,StatusCode::OK);
     let unknown:i64=sqlx::query_scalar("SELECT count(*) FROM dns_changes WHERE state='unknown'").fetch_one(&state.db).await.unwrap();assert_eq!(unknown,1);
     let (_,records,_)=request(&app,&format!("/api/groups/{group}/records"),"GET",json!({}),Some(&owner),false).await;
-    assert_eq!(request(&app,&format!("/api/groups/{group}/repair"),"POST",json!({"node_id":nodes[0],"expected_records":records["data"]}),Some(&owner),true).await.0,StatusCode::OK);
+    let (status,response,_)=request(&app,&format!("/api/groups/{group}/repair"),"POST",json!({"node_id":nodes[0],"expected_records":records["data"]}),Some(&owner),true).await;
+    assert_eq!(status,StatusCode::OK,"{response}");
     let pending:i64=sqlx::query_scalar("SELECT count(*) FROM dns_changes WHERE state IN ('writing','unknown')").fetch_one(&state.db).await.unwrap();assert_eq!(pending,0);
     sqlx::query("DELETE FROM dns_record_cooldown").execute(&state.db).await.unwrap();
     sqlx::query("UPDATE failover_groups SET last_switch=NULL,automatic=true WHERE id=$1").bind(group).execute(&state.db).await.unwrap();
@@ -140,7 +144,8 @@ async fn postgres_router_auth_operations_probes_and_dns() {
     tokio::time::sleep(Duration::from_millis(550)).await;
     assert_eq!(request(&app,&format!("/api/groups/{group}/reconcile"),"POST",json!({}),Some(&owner),true).await.0,StatusCode::OK);
     let (_,records,_)=request(&app,&format!("/api/groups/{group}/records"),"GET",json!({}),Some(&owner),false).await;
-    assert_eq!(request(&app,&format!("/api/groups/{group}/repair"),"POST",json!({"node_id":nodes[0],"expected_records":records["data"]}),Some(&owner),true).await.0,StatusCode::OK);
+    let (status,response,_)=request(&app,&format!("/api/groups/{group}/repair"),"POST",json!({"node_id":nodes[0],"expected_records":records["data"]}),Some(&owner),true).await;
+    assert_eq!(status,StatusCode::OK,"{response}");
     sqlx::query("DELETE FROM dns_record_cooldown").execute(&state.db).await.unwrap();
     sqlx::query("UPDATE failover_groups SET last_switch=NULL,automatic=true WHERE id=$1").bind(group).execute(&state.db).await.unwrap();
     mock.records.lock().unwrap().get_mut("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa").unwrap()["content"]=json!("192.0.2.99");

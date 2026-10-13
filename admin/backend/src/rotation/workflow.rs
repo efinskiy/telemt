@@ -133,12 +133,12 @@ async fn tick_inner(state:&State)->Result<()> {
     for id in pending {if let Err(error)=pending_step(state,id).await {sqlx::query("UPDATE ip_pools SET status=$2 WHERE id=(SELECT pool_id FROM ip_rotations WHERE id=$1)").bind(id).bind(error.1).execute(&state.db).await?;}}
     let pools=sqlx::query("SELECT * FROM ip_pools ORDER BY id LIMIT 20").fetch_all(&state.db).await?;
     for pool in pools {let id:Uuid=pool.get("id");let node_id:Uuid=pool.get("node_id");
-        if pool.get::<String,_>("status")=="preparing" {if let Some(operation)=pool.get::<Option<Uuid>,_>("preparation") {let status:String=sqlx::query_scalar("SELECT state FROM operations WHERE id=$1").bind(operation).fetch_one(&state.db).await?;
+        if pool.get::<String,_>("status")=="preparing" && let Some(operation)=pool.get::<Option<Uuid>,_>("preparation") {let status:String=sqlx::query_scalar("SELECT state FROM operations WHERE id=$1").bind(operation).fetch_one(&state.db).await?;
             if status=="succeeded" {let mut tx=coordinator(state).await?;let (status,compat)=node_request(state,node_id,reqwest::Method::GET,"/v1/fleet/compatibility",None,None).await?;let group=crate::dns::load(state,pool.get("group_id")).await?;
                 if status==200&&compat["data"]["fingerprint"]==group.get::<Value,_>("document")["fingerprint"]{sqlx::query("UPDATE failover_groups SET document=jsonb_set(document,'{configuration_verified}','true'),automatic=false WHERE id=$1").bind(pool.get::<Uuid,_>("group_id")).execute(&mut *tx).await?;sqlx::query("UPDATE ip_pools SET status='prepared' WHERE id=$1").bind(id).execute(&mut *tx).await?;}
                 tx.commit().await?;
             }else if ["failed","unknown","partial"].contains(&status.as_str()){sqlx::query("UPDATE ip_pools SET status='preparation_failed_or_unknown' WHERE id=$1").bind(id).execute(&state.db).await?;}
-        }}
+        }
         if !pool.get::<bool,_>("automatic"){continue;}
         let pending:i64=sqlx::query_scalar("SELECT count(*) FROM ip_rotations WHERE pool_id=$1 AND state IN('queued','dns_pending','retiring','unknown')").bind(id).fetch_one(&state.db).await?;if pending>0{continue;}
         if fresh(pool.get("last_rotation"),300){sqlx::query("UPDATE ip_pools SET status='cooldown' WHERE id=$1").bind(id).execute(&state.db).await?;continue;}

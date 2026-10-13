@@ -34,10 +34,10 @@ pub(super) fn listener_plan(listeners:&Value,selected:&Value,document:&Value,rem
 }
 
 pub(super) async fn health(state:&State,node_id:Uuid,ip:&str)->Result<Health> {
-    let last=Utc::now().timestamp()/15-1;
+    let last=state.probe_round()-1;
     let rows=sqlx::query("SELECT j.round,a.network,j.result FROM probe_jobs j JOIN agents a ON a.id=j.agent_id WHERE j.node_id=$1 AND j.address=$2 AND j.round BETWEEN $3-5 AND $3 AND j.completed_at IS NOT NULL AND a.enabled AND a.country='RU'").bind(node_id).bind(ip).bind(last).fetch_all(&state.db).await?;
     let mut networks:std::collections::HashMap<(i64,String),Vec<bool>>=std::collections::HashMap::new();
-    for row in rows {let result:Value=row.get("result");if result["network_ok"]==true{if let Some(good)=result["reachable"].as_bool(){networks.entry((row.get("round"),row.get("network"))).or_default().push(good);}}}
+    for row in rows {let result:Value=row.get("result");if result["network_ok"]==true && let Some(good)=result["reachable"].as_bool(){networks.entry((row.get("round"),row.get("network"))).or_default().push(good);}}
     let rounds:Vec<_>=(0..6).map(|offset|{let values:Vec<_>=networks.iter().filter(|((round,_),_)|*round==last-offset).map(|(_,values)|values).collect();(values.iter().filter(|values|values.iter().all(|good|*good)).count(),values.iter().filter(|values|values.iter().all(|good|!*good)).count())}).collect();
     let current=classify(&rounds,true);let mut tx=state.db.begin().await?;
     sqlx::query("INSERT INTO address_health(node_id,address) VALUES($1,$2) ON CONFLICT DO NOTHING").bind(node_id).bind(ip).execute(&mut *tx).await?;

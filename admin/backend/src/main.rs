@@ -53,6 +53,7 @@ async fn main()->anyhow::Result<()> {
     let geoip=Arc::new(geoip::GeoIp::load(std::env::var_os("ADMIN_GEOIP_DATABASE").map(Into::into)).await);
     let state=State{db,vault,client,geoip,hash_slots:Arc::new(tokio::sync::Semaphore::new(4)),
         #[cfg(test)] cloudflare_origin:None,
+        #[cfg(test)] probe_round_override:None,
         origin:parsed.origin().ascii_serialization().into(),assets:Arc::new(std::env::var("ADMIN_ASSETS_DIR").unwrap_or_else(|_|"../frontend/dist".into()).into())};
     let args:Vec<_>=std::env::args().collect();
     if args.get(1).map(String::as_str)==Some("reset-owner") {
