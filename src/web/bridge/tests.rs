@@ -25,7 +25,23 @@ fn carrier_method_is_page_owned_and_used_by_every_https_request() {
             method,
             &SecureRandom::new(),
         );
-        assert!(!page.body.contains("__"));
+        let nonce = page
+            .content_security_policy
+            .split_once("script-src 'nonce-")
+            .unwrap()
+            .1
+            .split_once('\'')
+            .unwrap()
+            .0;
+        assert_eq!(
+            base64::engine::general_purpose::URL_SAFE_NO_PAD
+                .decode(nonce)
+                .unwrap()
+                .len(),
+            18
+        );
+        // URL-safe nonces may contain double underscores; only template remnants are invalid.
+        assert!(!page.body.replace(nonce, "").contains("__"));
         assert!(
             page.body
                 .contains(&format!("const carrierMethod='{}';", method.as_str()))

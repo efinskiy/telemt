@@ -65,7 +65,7 @@ fn request(nonce:[u8;16])->Vec<u8>{let mut body=vec![0;8];let id=((chrono::Utc::
 fn validate_response(frame:&[u8],nonce:&[u8;16])->anyhow::Result<()> {
     anyhow::ensure!(frame.len()>=76&&frame[..8]==[0;8]&&frame[8]&1==1,"invalid MTProto envelope");
     let length=u32::from_le_bytes(frame[16..20].try_into()?) as usize;
-    anyhow::ensure!(length>=56&&length%4==0&&length<=frame.len()-20&&u32::from_le_bytes(frame[20..24].try_into()?)==RES_PQ&&bool::from(frame[24..40].ct_eq(nonce)),"invalid resPQ or nonce");
+    anyhow::ensure!(length>=56&&length.is_multiple_of(4)&&length<=frame.len()-20&&u32::from_le_bytes(frame[20..24].try_into()?)==RES_PQ&&bool::from(frame[24..40].ct_eq(nonce)),"invalid resPQ or nonce");
     let body=&frame[20..20+length];let pq=usize::from(body[36]);
     anyhow::ensure!((1..=8).contains(&pq),"invalid resPQ factor length");
     let vector=(37+pq+3)&!3;
