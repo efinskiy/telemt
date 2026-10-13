@@ -11,6 +11,8 @@ pub(crate) const DNS_COORDINATOR_LOCK: i64 = 78_213_419;
 #[derive(Clone)]
 pub(crate) struct State {
     pub db: PgPool, pub vault: Arc<Vault>, pub client: reqwest::Client,
+    /// Offline location data shared only by the authenticated control plane.
+    pub geoip: Arc<crate::geoip::GeoIp>,
     pub hash_slots: Arc<tokio::sync::Semaphore>,
     #[cfg(test)]
     pub cloudflare_origin: Option<Arc<str>>,

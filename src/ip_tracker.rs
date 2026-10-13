@@ -26,6 +26,8 @@ const USER_IP_TRACKER_SHARD_MASK: usize = USER_IP_TRACKER_SHARDS - 1;
 mod admission;
 mod cleanup;
 mod snapshot;
+// Read-only aggregation for the fleet connection map.
+mod live_snapshot;
 #[cfg(test)]
 mod tests;
 

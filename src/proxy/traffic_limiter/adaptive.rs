@@ -5,6 +5,9 @@ use std::sync::{Weak, atomic::AtomicBool};
 use serde::Serialize;
 
 mod control;
+// Snapshot aggregation remains outside the I/O path.
+mod observability;
+use observability::UserShapingSnapshot;
 mod io;
 pub(crate) use io::AdaptiveIo;
 pub(super) use control::Window;
@@ -59,6 +62,7 @@ pub(super) struct IpState {
 /// Flow hysteresis never changes payload order or IP ownership.
 pub(super) struct FlowDirection {
     pub(super) committed: AtomicU64,
+    speed: AtomicU64,
     window: AtomicU64,
     bulk: AtomicBool,
     requested_at: AtomicU64,
@@ -68,6 +72,7 @@ pub(super) struct FlowDirection {
 
 /// One logical relay owns both directions and cancellation-safe wait accounting.
 pub(super) struct Flow {
+    username: String,
     owner: Arc<Adaptive>,
     pub(super) ip: Arc<IpState>,
     pub(super) directions: [FlowDirection; 2],
@@ -128,6 +133,14 @@ pub(crate) struct ShapingSnapshot {
     pub wait_ms_total: u64,
     /// Bounded, IP-sorted page of process state.
     pub ips: Vec<IpSnapshot>,
+    /// Account totals cover all live flows, independently of pagination.
+    pub active_users: usize,
+    /// Accounts with at least one current adaptive-budget wait.
+    pub waiting_users: usize,
+    /// Live logical flows represented by this snapshot.
+    pub active_flows: usize,
+    /// Bounded account page; counters describe live flows only.
+    pub users: Vec<UserShapingSnapshot>,
 }
 
 #[derive(Serialize)]
@@ -144,6 +157,10 @@ pub(crate) struct IpSnapshot {
     pub flows: usize,
     /// Live bulk classifications for upload and download.
     pub bulk_flows: [usize; 2],
+    /// Current adaptive-budget waits, excluding ordinary network waits.
+    pub waiting_flows: [usize; 2],
+    /// Accumulated pacing time of currently live flows.
+    pub wait_ms: [u64; 2],
 }
 
 /// Refunds every unused debit when I/O is partial, pending, failed or cancelled.
@@ -188,7 +205,13 @@ impl Adaptive {
         }
         true
     }
+    /// Admits anonymous test flows without introducing account identity into scheduler fixtures.
+    #[cfg(test)]
     pub(super) fn acquire(self: &Arc<Self>, ip: IpAddr) -> Option<Arc<Flow>> {
+        self.acquire_named(ip, "")
+    }
+    /// Captures the authenticated account once for control-plane measurements.
+    pub(super) fn acquire_named(self: &Arc<Self>, ip: IpAddr, username: &str) -> Option<Arc<Flow>> {
         let ip = match ip { IpAddr::V6(ip) => ip.to_ipv4_mapped().map(IpAddr::V4).unwrap_or(IpAddr::V6(ip)), ip => ip };
         let mut registry = self.registry.lock();
         if registry.last_cleanup != second() { control::cleanup(&mut registry, second()); registry.last_cleanup = second(); }
@@ -205,9 +228,10 @@ impl Adaptive {
             self.admission_version.fetch_add(1, Ordering::Release);
         }
         let flow = Arc::new(Flow {
+            username: username.to_owned(),
             owner: Arc::clone(self), ip: Arc::clone(&entry.state), waiting_until: std::array::from_fn(|_| AtomicU64::new(0)), wait_ms: std::array::from_fn(|_| AtomicU64::new(0)),
             directions: std::array::from_fn(|_| FlowDirection {
-                committed: AtomicU64::new(0), window: AtomicU64::new(0), bulk: AtomicBool::new(false),
+                committed: AtomicU64::new(0), speed: AtomicU64::new(0), window: AtomicU64::new(0), bulk: AtomicBool::new(false),
                 requested_at: AtomicU64::new(current_epoch()), pending_bytes: AtomicU64::new(0), priority_pending: AtomicBool::new(false),
             }),
         });
@@ -236,7 +260,13 @@ impl Adaptive {
         let registry = self.registry.lock();
         let mut ips: Vec<_> = registry.ips.iter().collect();
         ips.sort_unstable_by_key(|(ip, _)| **ip);
+        let users = observability::users(&registry);
+        let epoch = current_epoch();
         ShapingSnapshot {
+            active_users: users.len(),
+            waiting_users: users.iter().filter(|user| user.waiting_flows.iter().any(|count| *count > 0)).count(),
+            active_flows: users.iter().map(|user| user.flows).sum(),
+            users: users.into_iter().skip(offset).take(limit.min(1000)).collect(),
             counter_instance: self.counter_instance.clone(),
             enabled: registry.config.enabled, policy: registry.config.clone(), retained_ips: ips.len(),
             committed_bytes: std::array::from_fn(|i| ips.iter().fold(registry.retired[i], |sum, (_, entry)| sum.saturating_add(entry.state.directions[i].committed.load(Ordering::Relaxed)))),
@@ -244,6 +274,8 @@ impl Adaptive {
             admission_rejected_total: self.exhausted.load(Ordering::Relaxed), throttle_total: self.throttles.load(Ordering::Relaxed),
             wait_ms_total: self.waits_ms.load(Ordering::Relaxed),
             ips: ips.into_iter().skip(offset).take(limit.min(1000)).map(|(ip, entry)| IpSnapshot {
+                waiting_flows: std::array::from_fn(|i| entry.flows.iter().filter_map(|(flow, _)| flow.upgrade()).filter(|flow| registry.config.enabled && flow.waiting_until[i].load(Ordering::Relaxed) > epoch).count()),
+                wait_ms: std::array::from_fn(|i| entry.flows.iter().filter_map(|(flow, _)| flow.upgrade()).fold(0u64, |sum, flow| sum.saturating_add(flow.wait_ms[i].load(Ordering::Relaxed)))),
                 ip: *ip, window_bytes: std::array::from_fn(|i| entry.state.directions[i].window.load(Ordering::Relaxed)),
                 speed_bps: std::array::from_fn(|i| entry.state.directions[i].speed.load(Ordering::Relaxed)),
                 epoch_bytes: std::array::from_fn(|i| [entry.state.directions[i].light_cap.load(Ordering::Relaxed), entry.state.directions[i].bulk_cap.load(Ordering::Relaxed)]),
@@ -422,7 +454,7 @@ impl TrafficLease {
         if let Some(flow) = self.adaptive.load_full() { return Some(flow); }
         let _guard = self.refresh.lock();
         if let Some(flow) = self.adaptive.load_full() { return Some(flow); }
-        let flow = self.limiter.adaptive.acquire(self.client_ip)?;
+        let flow = self.limiter.adaptive.acquire_named(self.client_ip, &self.user)?;
         self.adaptive.store(Some(Arc::clone(&flow)));
         Some(flow)
     }

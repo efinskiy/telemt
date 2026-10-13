@@ -9,7 +9,7 @@ fn control_path(path:&str,method:&str)->bool {
     if path.len()>512 || !path.starts_with("/v1/") || path.contains(['#','\\']) { return false; }
     let raw=path.split('?').next().unwrap_or("");
     if method=="GET" {
-        return ["/v1/config","/v1/users","/v1/health","/v1/health/ready","/v1/system/info","/v1/limits/effective"].contains(&raw)
+        return ["/v1/config","/v1/users","/v1/fleet/traffic","/v1/health","/v1/health/ready","/v1/system/info","/v1/limits/effective"].contains(&raw)
             || raw.starts_with("/v1/runtime/") || raw.starts_with("/v1/stats/") || user_path(raw,"GET");
     }
     (raw=="/v1/config" && method=="PATCH") || (raw=="/v1/system/reload" && method=="POST")
@@ -58,6 +58,7 @@ pub(crate) async fn dispatch(ExtractState(state):ExtractState<State>,Path(path):
             let (status,response)=node_request(&state,parse_id(id)?,reqwest::Method::GET,path,None,None).await?;
             let response=if user.role=="viewer"{redact(response)}else{response}; Ok(Json(ok(json!({"status":status,"response":response}))))
         }
+        ["nodes",id,"connections-map"] if method==Method::GET => Ok(Json(ok(crate::connections_map::read(&state,parse_id(id)?).await?))),
         ["nodes",id,"history"] if method==Method::GET => {
             let rows=sqlx::query("SELECT minute,snapshot FROM minute_history WHERE node_id=$1 AND minute>now()-interval '30 days' ORDER BY minute DESC LIMIT 1440").bind(parse_id(id)?).fetch_all(&state.db).await?;
             Ok(Json(ok(json!(rows.into_iter().map(|r|json!({"at":r.get::<chrono::DateTime<chrono::Utc>,_>("minute"),"snapshot":r.get::<Value,_>("snapshot")})).collect::<Vec<_>>()))))
@@ -147,6 +148,12 @@ mod tests {use super::*;#[test]fn node_proxy_does_not_accept_arbitrary_targets()
 mod node_api_url_tests {
     use super::validate_node_api_url;
 
+    #[test]
+    fn fleet_traffic_is_read_only_monitoring() {
+        assert!(super::control_path("/v1/fleet/traffic", "GET"));
+        assert!(!super::control_path("/v1/fleet/traffic", "POST"));
+        assert!(!super::control_path("/v1/fleet/traffic/other", "GET"));
+    }
     #[test]
     fn accepts_public_private_and_domain_management_origins() {
         for origin in ["http://203.0.113.10:9091/","https://198.51.100.20:9443/","https://[2001:db8::10]:9443/","http://node.example.org:9091/","https://node.example.org","http://10.70.0.2:9091/","http://127.0.0.1:9091/","http://[::1]:9091/","https://[fd00::2]/"] {

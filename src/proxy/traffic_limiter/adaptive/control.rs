@@ -75,7 +75,8 @@ pub(super) fn calculate(registry: &mut Registry, now: u64) {
                 if let Some(flow) = flow.upgrade() {
                     let d = &flow.directions[i];
                     if epoch.saturating_sub(d.requested_at.load(Ordering::Relaxed)) > 10 { flow.priority_pending(i, false); }
-                    let (window, _) = history[i].sample(now, d.committed.load(Ordering::Relaxed));
+                    let (window, delta) = history[i].sample(now, d.committed.load(Ordering::Relaxed));
+                    if registry.tick != now { d.speed.store(delta.saturating_mul(8), Ordering::Relaxed); }
                     d.window.store(window, Ordering::Relaxed);
                     let bulk = d.bulk.load(Ordering::Relaxed);
                     if !bulk && window >= registry.config.bulk_enter_bytes { d.bulk.store(true, Ordering::Relaxed); }

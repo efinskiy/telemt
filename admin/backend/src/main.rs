@@ -1,6 +1,8 @@
 //! Independent control plane; no dependency on telemt's payload relay or public camouflage listeners.
 mod auth;
 mod crypto;
+mod geoip;
+mod connections_map;
 mod dns;
 mod error;
 mod monitor;
@@ -48,7 +50,8 @@ async fn main()->anyhow::Result<()> {
     let db=PgPoolOptions::new().max_connections(16).acquire_timeout(Duration::from_secs(5)).connect(&database_url().await?).await?;
     sqlx::migrate!().run(&db).await?;
     let client=reqwest::Client::builder().timeout(Duration::from_secs(5)).connect_timeout(Duration::from_secs(3)).redirect(reqwest::redirect::Policy::none()).no_proxy().build()?;
-    let state=State{db,vault,client,hash_slots:Arc::new(tokio::sync::Semaphore::new(4)),
+    let geoip=Arc::new(geoip::GeoIp::load(std::env::var_os("ADMIN_GEOIP_DATABASE").map(Into::into)).await);
+    let state=State{db,vault,client,geoip,hash_slots:Arc::new(tokio::sync::Semaphore::new(4)),
         #[cfg(test)] cloudflare_origin:None,
         origin:parsed.origin().ascii_serialization().into(),assets:Arc::new(std::env::var("ADMIN_ASSETS_DIR").unwrap_or_else(|_|"../frontend/dist".into()).into())};
     let args:Vec<_>=std::env::args().collect();

@@ -6,6 +6,32 @@ require the control service to forward traffic. Run on Linux with Docker Engine
 and Compose v2. Rust builders use MSRV 1.88. The administration domain must be
 separate from the proxy's TLS camouflage domain.
 
+## Build parallelism
+
+All Rust image stages explicitly select the CPU count reported by `nproc` inside
+the Docker builder and print `Cargo build jobs: N`. Override the job count with a
+build argument when the builder has limited memory or CPU quota:
+
+```sh
+docker compose -f compose.yml --profile node build --build-arg CARGO_BUILD_JOBS=4 node
+```
+
+The same argument works for `admin`, `probe`, and a separate node-only Compose
+file using this Dockerfile. An omitted or empty argument selects `nproc` again.
+For a local Linux builder, explicitly request the host's available CPU count:
+
+```sh
+docker compose -f compose.yml --profile node build --build-arg CARGO_BUILD_JOBS="$(nproc)" node
+```
+
+Cargo already defaults to available logical CPUs; this exposes an explicit build
+control rather than guaranteeing a speedup. The builder's CPU affinity and
+quotas still apply, and more jobs require more memory. The node's release profile
+retains `lto = "fat"` and `codegen-units = 1`, so compilation and final optimization
+cannot keep every core busy throughout the build. Changing jobs does not change
+these release optimization settings. Recreate the service after a successful
+build with `docker compose -f compose.yml --profile node up -d --no-deps node`.
+
 ## Prepare the controller
 
 1. Copy `.env.example` to `.env`; replace the domains and node directory. Keep the
@@ -113,6 +139,24 @@ whitelist that proxy's loopback address (also used by the local healthcheck).
 Restrict the public reverse-proxy endpoint to Fleet's egress IP at the proxy or
 firewall. The native API checks the actual TCP peer, not `X-Forwarded-For`.
 The API token remains required and is forwarded by the reverse proxy.
+
+If the cabinet reports `Fleet API returned a non-JSON response`, inspect the
+failed browser request's HTTP status and content type. HTML error pages from the
+controller's reverse proxy or CDN are not node configuration responses. A node
+response that cannot be parsed by the backend normally becomes JSON HTTP 502
+with `upstream_operation_failed`; a CDN may replace that gateway response.
+When fleet lists work but node reads fail, check the node's `/v1/health` endpoint
+from the controller host, first using DNS and then using curl's `--resolve` with
+the node's actual address. Preserve TLS verification. Without an Authorization
+header, JSON HTTP 401 confirms that the API is reachable; HTML HTTP 403 usually
+indicates a reverse-proxy access rule, and timeout/refusal points to routing,
+firewall or listener availability. A successful host request does not prove the
+backend container has the same connectivity or the stored token is correct.
+
+For a node API exposed on HTTPS port 9443, keep its hostname DNS-only when using
+Cloudflare DNS: that port is outside Cloudflare's standard proxied HTTPS ports.
+The controller hostname's proxy setting is independent. Restrict the node's
+public API to the controller's actual egress address, not a Cloudflare edge IP.
 
 Enable shaping through the validated configuration API after measuring usable
 channel capacities. These are bits per second, not bytes per second:
@@ -289,3 +333,106 @@ the displayed repair while retaining the rotation state and keeping automation
 off. Ordinary DNS-group repair cannot bypass pool ownership.
 
 Local results and remaining production acceptance gates are in [VERIFICATION.md](VERIFICATION.md).
+
+## Russian console, forms and shaping telemetry
+
+The console presents navigation, forms and diagnostic labels in Russian. Update
+both the `admin` image (which embeds the frontend) and node images from this source
+tree to enable the new per-account shaping statistics. No database migration is
+required for this update. Existing minute history remains readable; older samples
+without connected-account counters appear as missing measurements, not zeroes.
+
+The overview charts use the inspected node selected at the top of the page.
+Traffic is averaged over each recorded minute; connected users and connections
+are the last observation in that minute. Fleet-wide user counts are a sum of
+node-local counts, not deduplicated identities across different nodes.
+
+Configuration forms send only changed object fields and retain the revision
+loaded with the form. Arrays replace in full, preserving untouched properties of
+retained entries. A conflict keeps the draft; explicitly reload and reconcile it.
+The node still validates every write. Installation-only settings (management API,
+metrics bindings, global networking/server settings) must be changed in deployment
+configuration. Removing existing dictionary keys is not supported by the current
+merge API and requires editing the node configuration file. Optional fields in
+replacement arrays can be returned to inheritance by removing that field.
+
+Shaping exposes additive runtime fields `active_users`, `waiting_users`,
+`active_flows` and a bounded `users` page. Each user row contains `username`,
+`flows`, directional `window_bytes`, `committed_bytes`, `speed_bps`, `bulk_flows`,
+`waiting_flows` and `wait_ms`; array order is upload from client, download to client.
+These counters aggregate currently live authenticated flows and can decrease
+when a flow closes. `speed_bps` is the controller measurement, not a difference of
+live-flow totals. Overall account traffic requires user telemetry; local shaping
+measurements do not. The IP table shows calculated class allocations, including
+shared NAT budgets. Borrowing spare capacity can exceed a calculated class rate;
+no hypothetical percentage speed reduction is displayed.
+
+Usernames are attached once at flow admission. Snapshot aggregation is bounded
+by the existing flow/IP limits and stays on the control plane. No packet ordering,
+KDF, TLS framing, reservation/refund or scheduling policy is changed. Per-user
+rows are not stored in Fleet's periodic history; aggregate counts are retained.
+The runtime endpoint applies the same bounded offset/limit to independently
+sorted IP and user pages. Totals always cover all live flows before pagination.
+
+Validation for this update: frontend production build/typecheck, 22 unit tests,
+16 Chromium scenarios; Rust 1.88 Linux all-target check, 56 limiter-harness tests,
+14 backend tests and backend strict Clippy. The database integration test was not
+rerun for this update. A 10,000-flow harness measured small-flow p95 at 165 ms.
+The disabled-loopback throughput gate did not meet 3% on this shared macOS host
+(17.119%, then 3.226% on repeat); an isolated full-server baseline remains required.
+No production deployment or DNS change was performed by these checks.
+
+## Live connection map
+
+The Overview page includes a draggable globe and a flat map, zoom controls,
+connection routes to the selected node, geographic clusters, and a searchable IP
+table. Data is refreshed every five seconds while the page is open. Update both
+Fleet and telemt nodes: the map needs `GET /v1/runtime/clients` on each node.
+Older nodes display an update notice rather than an empty map presented as live.
+The node snapshot reads existing authenticated admissions, independent of traffic
+telemetry and shaping. WEB counts are logical authenticated streams, not carriers.
+
+Install the optional local geolocation database from the Fleet deployment directory:
+
+```sh
+cd /opt/telemt/deploy/fleet
+docker compose --profile geoip run --rm geoip
+docker compose restart admin
+```
+
+The installer downloads the current monthly **DB-IP City Lite** MMDB to the
+`geoip` volume and replaces it atomically. Repeat these commands monthly; for a
+specific available release, append `--month YYYY-MM` to the `run` command. Failed
+downloads, size limits and invalid compressed files preserve the previous file.
+No updater contacts client addresses. A corrupt MMDB is rejected by Fleet and
+reported in the UI; administrative functions remain available. Database updates
+require restarting `admin`, not telemt nodes.
+
+For installations outside Compose, run `python3 deploy/fleet/update_geoip.py
+--destination /path/to/dbip-city-lite.mmdb` and set `ADMIN_GEOIP_DATABASE` to that
+readable file before restarting Fleet. The database is loaded once into memory
+(maximum 256 MiB). Four concurrent map requests/lookup workers are allowed. Map
+requests query only registered enabled nodes and never send client IPs to a
+third-party geolocation API. The browser loads all map geometry from Fleet.
+
+Coordinates represent the approximate location of an IP network, not a person's
+location. VPN and NAT addresses may represent an exit network. Private/reserved
+addresses, missing database records and unknown node coordinates are not plotted.
+The table retains IPs without coordinates. IP-level account counts must not be
+summed to obtain distinct users; the summary uses the node's distinct-account
+counter. Shard observations are sequential and pending admission cleanup is
+reported explicitly. Responses are capped at 10,000 IPs, and at most 300 geographic
+clusters are rendered. Truncated snapshots carry a visible notice. Route lines
+use the registered node address of the corresponding IP family; they are logical
+connections, not measured Internet paths.
+
+On a failed refresh, the last snapshot is marked stale. On node changes the old
+snapshot is discarded. Map snapshots are not persisted to PostgreSQL or browser
+storage. Access requires the same authenticated session as other monitoring pages;
+all three roles may read them. The new API is read-only and does not alter listeners,
+DNS, cryptography, shaping policy or relay packet processing.
+
+Attribution: [IP Geolocation by DB-IP](https://db-ip.com), licensed under
+[CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). Geometry comes from
+[Natural Earth](https://www.naturalearthdata.com/about/terms-of-use/) (public domain).
+See `admin/frontend/MAP-NOTICES.md` for source provenance.

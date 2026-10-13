@@ -47,7 +47,14 @@ pub(super) async fn handle(
                 "counter_source": if shaping.enabled { "shaping" } else { "user_stats" },
                 "counter_instance": shaping.counter_instance,
                 "runtime_generation": shared.active_runtime.load().id,
+                "active_users": cfg.access.users.keys().filter(|user| shared.stats.get_process_user_curr_connects(user) > 0).count(),
+                "telemetry_user_enabled": shared.stats.telemetry_policy().user_enabled,
                 "current_connections": shared.stats.get_current_connections_total()});
+            Ok(success_response(StatusCode::OK, data, current_revision(&shared.config_path).await?))
+        }
+        ("GET", "/v1/runtime/clients") => {
+            let snapshot = shared.ip_tracker.live_clients(10_000).await;
+            let data = serde_json::json!({"generated_at": chrono::Utc::now().to_rfc3339(), "snapshot": snapshot});
             Ok(success_response(StatusCode::OK, data, current_revision(&shared.config_path).await?))
         }
         ("GET", "/v1/runtime/shaping") => {

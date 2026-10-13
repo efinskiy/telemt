@@ -33,7 +33,53 @@ interfaces. Production servers and DNS are not modified during development.
 - [x] Update node enrollment UI and deployment/API documentation.
 - [x] Verify URL boundaries, actual enrollment/editing and hostname requests, browser submission and builds.
 
-## Verification and release gates
+## Russian fleet interface and observability
+
+- [x] Translate navigation, forms, status/error messages, dialogs and accessibility labels into Russian.
+- [x] Replace configuration/DNS JSON editors with described typed fields and sparse revision-fenced patches.
+- [x] Add timestamped traffic, connected-account and connection charts with explicit missing/stale data.
+- [x] Extend shaping snapshots with bounded per-account live-flow measurements without changing packet-path scheduling.
+- [x] Display account traffic, waiting users/flows, wait duration and shared IP allocations on the shaping page.
+- [x] Replace diagnostic and operation JSON dumps with structured cards, facts and tables.
+- [x] Verify telemetry invariants, form patches, localization, production builds and browser workflows.
+
+- Evidence: frontend build/typecheck; 22 unit tests; 16 Chromium scenarios; Rust 1.88 Linux all-target check (existing warnings only); 56 limiter tests; 14 backend tests and strict Clippy. New UI snapshots inspected at desktop/mobile sizes.
+- Throughput gate remains open: disabled-loopback regression was 17.119% then 3.226% on this shared host. The 10,000-flow small-stream harness passed at p95 165 ms; real network acceptance tests below remain pending.
+- No production update or DNS change. Update Fleet and node images to expose the new account counters; old nodes/history explicitly show unavailable fields.
+
+## Live connection map
+
+- [x] Add a bounded live admission snapshot independent of shaping and optional telemetry.
+- [x] Resolve registered node and client IPs locally with a city MMDB database; never send client addresses to a geolocation service.
+- [x] Add globe/flat map, rotation/pan/zoom, route selection and live connection details to the inspected node overview.
+- [x] Distinguish private/unknown locations, truncated observations, stale data and unavailable database/node APIs.
+- [x] Ship local map assets, attribution, bounded database installer, Compose mount and deployment instructions.
+- [x] Verify snapshot/lookup invariants, map interactions, production builds and Russian mobile presentation.
+
+- Evidence: Rust 1.88 Linux all-target check (existing warnings only); 31 production IP-tracker harness tests; backend release build and strict Clippy; 19 backend unit tests, PostgreSQL router integration (including owner/operator/viewer map access), and a real DB-IP IPv4/IPv6 lookup test. Frontend production build/typecheck, 27 unit tests and 23 distinct Chromium scenarios passed, including 10,000-IP map bounds, stale snapshots, node changes, no external requests, mobile, drag/keyboard/fullscreen and reduced motion. Three offline installer tests and Compose config validation passed.
+- Downloaded the real October 2026 DB-IP City Lite database into a temporary local directory and verified it with the production lookup code. Database and browser assets are not fetched on behalf of client IPs. The optional database installer, restart requirement and attribution are documented in deploy/fleet/README.md.
+- Desktop globe/flat map and mobile screenshots inspected. Temporary PostgreSQL was stopped after verification. No production deployment, node configuration or DNS changes; Docker image startup remains unverified without a local Engine.
+- Also corrected the existing shaping UI's read-only `/v1/fleet/traffic` allowlist omission, with a regression test.
+
+## Zashboard visual redesign
+
+- [x] Apply a shared neutral light/dark/system theme, compact cards, tables and described forms across Fleet.
+- [x] Add an icon sidebar with collapse preference and a mobile bottom dock with access to every permitted section.
+- [x] Align connection map, charts, status badges, dialogs and login with the shared design tokens.
+- [x] Run only the frontend production build/typecheck and essential desktop/mobile smoke scenarios; inspect screenshots.
+
+- Reference: current zashboard light/dark palettes and compact navigation/card patterns inspected at e5b48b4e8fe5c727170a57444c969f01aca3fbad. Fleet uses original React components and shared CSS variables; no framework or backend changes.
+- Evidence: frontend production build and strict TypeScript check passed. Exactly four essential browser scenarios ran: desktop section navigation, configuration draft/conflict handling, theme/sidebar persistence, and mobile dock/dialog navigation. Light/dark overview, shaping, mobile diagnostics and bottom-sheet screenshots inspected. No backend, protocol, load or broad regression suites run for this visual-only request.
+- Theme follows the system by default; explicit choice and desktop sidebar collapse are persisted locally. All allowed pages remain reachable through the desktop rail or mobile More sheet. Changes are local and not deployed.
+
+## Current verification
+
+- [x] Reproduce HTML responses at the Fleet browser API boundary and replace raw JSON parser failures with actionable routing diagnostics; keep upstream bodies out of error messages.
+- [x] Verify response handling (14 frontend unit tests), production build/type checking, and 10 browser scenarios including Users recovery after an HTML 502.
+- [ ] Resolve the deployed node-read failure: browser evidence shows Cloudflare HTML 502 on Fleet node reads while local Fleet lists succeed; awaiting domain/direct-IP Control API checks from the controller host.
+
+- [x] Expose Rust image build job counts through `CARGO_BUILD_JOBS`, defaulting to builder-visible CPUs without changing release optimizations.
+- [x] Verify all three build commands with 12 shell-harness cases (unset/empty automatic CPU selection and explicit 1/16 jobs), shell syntax and diff checks. Full image compilation remains unexecuted because the local Docker Engine is unavailable.
 
 - [x] Rust 1.88 Linux all-target checks and release build; standalone backend/agent checks.
 - [x] Backend strict lint and PostgreSQL integration covering auth, roles, revisions, probes and DNS recovery.

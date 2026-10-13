@@ -7,6 +7,7 @@ use tower::ServiceExt;
 use uuid::Uuid;
 use std::collections::HashMap;
 mod rotation_cases;
+mod connection_maps;
 mod node_api_urls;
 
 #[derive(Clone)]struct Mock {config:Arc<std::sync::Mutex<Value>>,revision:Arc<std::sync::Mutex<String>>,records:Arc<std::sync::Mutex<HashMap<String,Value>>>,fail_patch:Arc<std::sync::atomic::AtomicBool>,stall_patch:Arc<std::sync::atomic::AtomicBool>,patch_started:Arc<tokio::sync::Notify>,user_ready:Arc<std::sync::atomic::AtomicBool>}
@@ -26,6 +27,7 @@ async fn node(ExtractState(mock):ExtractState<Mock>,headers:HeaderMap,req:axum::
         ("POST","/v1/users")=>{return(StatusCode::ACCEPTED,Json(json!({"ok":true,"data":{"user":{"username":"new-user","enabled":true,"in_runtime":false},"secret":body["secret"]},"revision":"r2"})));}
         ("GET","/v1/users/new-user")=>json!({"username":"new-user","enabled":true,"in_runtime":mock.user_ready.load(std::sync::atomic::Ordering::Relaxed)}),
         ("GET","/v1/users")=>json!([{"username":"alice","links":{"tls":["tg://proxy?secret=hidden"]},"enabled":true}]),
+        ("GET","/v1/runtime/clients")=>json!({"snapshot":{"ips":[{"ip":"1.1.1.1","connections":3,"users":2},{"ip":"2606:4700:4700::1111","connections":2,"users":1}],"total_ips":2,"connections":5,"active_users":2,"cleanup_pending":0,"truncated":false}}),
         ("GET","/v1/fleet/compatibility")=>json!({"fingerprint":"a".repeat(64)}),
         ("GET","/v1/health/ready")=>json!({"ready":true}),
         ("GET","/v1/runtime/interfaces")=>json!({"addresses":[{"ip":"192.0.2.1","usable":true,"interface":"eth0"},{"ip":"192.0.2.3","usable":true,"interface":"eth0"},{"ip":"192.0.2.4","usable":true,"interface":"eth0"},{"ip":"2001:db8::1","usable":true,"interface":"eth0"}],"active_listeners":mock.config.lock().unwrap()["server"]["listeners"],"runtime_generation":1}),
@@ -68,7 +70,7 @@ async fn postgres_router_auth_operations_probes_and_dns() {
     let mock=Mock{config:Arc::new(std::sync::Mutex::new(json!({"shaping":{"enabled":false}}))),revision:Arc::new(std::sync::Mutex::new("r1".into())),records:Arc::new(std::sync::Mutex::new(HashMap::from([("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".into(),json!({"name":"proxy.test","type":"A","content":"192.0.2.1","ttl":60,"proxied":false,"modified_on":"original"})),("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".into(),json!({"name":"proxy.test","type":"AAAA","content":"2001:db8::1","ttl":60,"proxied":false,"modified_on":"original"}))]))),fail_patch:Arc::new(std::sync::atomic::AtomicBool::new(false)),stall_patch:Arc::new(std::sync::atomic::AtomicBool::new(false)),patch_started:Arc::new(tokio::sync::Notify::new()),user_ready:Arc::new(std::sync::atomic::AtomicBool::new(false))};
     let listener=tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();let port=listener.local_addr().unwrap().port();let mock_app=Router::new().route("/v1/{*path}",any(node)).route("/zones/{*path}",any(cloudflare)).with_state(mock.clone());
     let server=tokio::spawn(async move{axum::serve(listener,mock_app).await.unwrap();});
-    let state=State{db,vault:Arc::new(crypto::Vault::new(&[17;32]).unwrap()),client:reqwest::Client::builder().redirect(reqwest::redirect::Policy::none()).no_proxy().timeout(Duration::from_secs(3)).build().unwrap(),hash_slots:Arc::new(tokio::sync::Semaphore::new(4)),cloudflare_origin:Some(format!("http://127.0.0.1:{port}").into()),origin:"https://admin.test".into(),assets:Arc::new("/private/tmp/unavailable-admin-assets".into())};
+    let state=State{db,geoip:Arc::new(crate::geoip::GeoIp::unavailable("missing")),vault:Arc::new(crypto::Vault::new(&[17;32]).unwrap()),client:reqwest::Client::builder().redirect(reqwest::redirect::Policy::none()).no_proxy().timeout(Duration::from_secs(3)).build().unwrap(),hash_slots:Arc::new(tokio::sync::Semaphore::new(4)),cloudflare_origin:Some(format!("http://127.0.0.1:{port}").into()),origin:"https://admin.test".into(),assets:Arc::new("/private/tmp/unavailable-admin-assets".into())};
     auth::create(&state,"owner","long-test-password-only","owner").await.unwrap();auth::create(&state,"viewer","long-test-password-only","viewer").await.unwrap();
     let app=application(state.clone());let owner=login(&state,&app,"owner").await;let viewer=login(&state,&app,"viewer").await;
     assert_eq!(request(&app,"/api/nodes","GET",json!({}),None,false).await.0,StatusCode::UNAUTHORIZED);
@@ -81,6 +83,7 @@ async fn postgres_router_auth_operations_probes_and_dns() {
         let (status,result,_)=request(&app,"/api/nodes","POST",json!({"name":name,"api_url":format!("http://127.0.0.1:{port}/"),"token":"Bearer test-node-token","probe_secret":secret,"ipv4":ip,"ipv6":if name=="primary"{"2001:db8::1"}else{"2001:db8::2"},"port":443,"sni":"example.org","probe_dc":2}),Some(&owner),true).await;
         assert_eq!(status,StatusCode::OK);nodes.push(Uuid::parse_str(result["data"]["id"].as_str().unwrap()).unwrap());
     }
+    connection_maps::run(&state,&app,&owner,&viewer,nodes[0]).await;
     let cipher:String=sqlx::query_scalar("SELECT probe_cipher FROM nodes WHERE id=$1").bind(nodes[0]).fetch_one(&state.db).await.unwrap();assert!(!cipher.contains(secret));
     let (_,response,_)=request(&app,&format!("/api/nodes/{}/read?path=%2Fv1%2Fusers",nodes[0]),"GET",json!({}),Some(&viewer),false).await;
     assert!(response["data"]["response"]["data"][0].get("links").is_none());

@@ -9,19 +9,28 @@ RUN npm run build
 FROM rust:1.88-bookworm AS admin-build
 WORKDIR /build
 COPY admin/backend/ ./
-RUN cargo build --release --locked
+ARG CARGO_BUILD_JOBS
+RUN export CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-$(nproc)}" \
+    && printf 'Cargo build jobs: %s\n' "$CARGO_BUILD_JOBS" \
+    && cargo build --release --locked --jobs "$CARGO_BUILD_JOBS"
 
 FROM rust:1.88-bookworm AS agent-build
 WORKDIR /build
 COPY agent/ ./
-RUN cargo build --release --locked
+ARG CARGO_BUILD_JOBS
+RUN export CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-$(nproc)}" \
+    && printf 'Cargo build jobs: %s\n' "$CARGO_BUILD_JOBS" \
+    && cargo build --release --locked --jobs "$CARGO_BUILD_JOBS"
 
 FROM rust:1.88-bookworm AS node-build
 WORKDIR /build
 COPY Cargo.toml Cargo.lock ./
 COPY src/ ./src/
 COPY benches/ ./benches/
-RUN cargo build --release --locked
+ARG CARGO_BUILD_JOBS
+RUN export CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-$(nproc)}" \
+    && printf 'Cargo build jobs: %s\n' "$CARGO_BUILD_JOBS" \
+    && cargo build --release --locked --jobs "$CARGO_BUILD_JOBS"
 
 FROM debian:bookworm-slim AS runtime
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates \

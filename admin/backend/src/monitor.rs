@@ -17,7 +17,7 @@ pub(crate) async fn collect(state:&State)->anyhow::Result<()> {
             let (key,result)=read?;
             match result {Ok((status,data))=>{snapshot[key]=data["data"].clone();if key=="health"{snapshot["management"]=json!("reachable");snapshot["ready"]=json!(status==200&&data["data"]["ready"]==true);}},Err(_)=>{snapshot[key]=json!({"unavailable":true});}}
         }
-        if let Some(object)=snapshot["shaping"].as_object_mut(){object.remove("ips");}
+        if let Some(object)=snapshot["shaping"].as_object_mut(){object.remove("ips");object.remove("users");}
         let now=chrono::Utc::now();let seconds=old_at.map(|at|now.signed_duration_since(at).num_milliseconds() as f64/1000.0).unwrap_or(0.0);
         let same_process=snapshot["traffic"]["counter_instance"].is_string() && snapshot["traffic"]["counter_instance"]==previous["traffic"]["counter_instance"]
             && snapshot["traffic"]["runtime_generation"]==previous["traffic"]["runtime_generation"]

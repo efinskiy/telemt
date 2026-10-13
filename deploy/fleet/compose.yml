@@ -23,9 +23,11 @@ services:
     environment:
       DATABASE_URL_FILE: /run/secrets/database_url
       ADMIN_MASTER_KEY_FILE: /run/secrets/master_key
+      ADMIN_GEOIP_DATABASE: /var/lib/telemt-geoip/dbip-city-lite.mmdb
       ADMIN_ORIGIN: "https://${ADMIN_DOMAIN:?Set ADMIN_DOMAIN}"
       RUST_LOG: info
     secrets: [database_url, master_key]
+    volumes: [geoip:/var/lib/telemt-geoip:ro]
     depends_on: {postgres: {condition: service_healthy}}
     networks: [management]
     read_only: true
@@ -49,6 +51,16 @@ services:
     networks: [management]
     restart: unless-stopped
     stop_grace_period: 20s
+  geoip:
+    image: python:3.12-alpine
+    profiles: [geoip]
+    entrypoint: [python, /app/update_geoip.py]
+    volumes: [geoip:/var/lib/telemt-geoip, ./update_geoip.py:/app/update_geoip.py:ro]
+    read_only: true
+    tmpfs: [/tmp:size=160m]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    restart: "no"
   certbot:
     image: certbot/certbot:v4.0.0
     profiles: [certificate]
@@ -96,6 +108,7 @@ services:
 networks:
   management:
 volumes:
+  geoip:
   database:
   certificates:
   challenges:

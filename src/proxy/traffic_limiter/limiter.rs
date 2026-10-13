@@ -177,7 +177,7 @@ impl TrafficLimiter {
         user: &str,
         client_ip: IpAddr,
     ) -> Option<Arc<TrafficLease>> {
-        let adaptive = if self.adaptive.enabled() { Some(self.adaptive.acquire(client_ip)?) } else { None };
+        let adaptive = if self.adaptive.enabled() { Some(self.adaptive.acquire_named(client_ip, user)?) } else { None };
         let policy = self.policy.load_full();
         let binding = self.build_binding(user, client_ip, &policy);
         Some(Arc::new(TrafficLease {
