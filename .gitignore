@@ -22,3 +22,12 @@ target
 
 proxy-secret
 coverage-html/
+# Fleet administration build artifacts and local secrets
+node_modules/
+dist/
+*.tsbuildinfo
+secrets/
+playwright-report/
+test-results/
+
+deploy/fleet/.env

@@ -113,6 +113,11 @@ pub struct CryptoReader<R> {
 }
 
 impl<R> CryptoReader<R> {
+    /// Adds transport pacing without resetting cipher state or partially read data.
+    pub(crate) fn map_inner<T>(self, map: impl FnOnce(R) -> T) -> CryptoReader<T> {
+        CryptoReader { upstream: map(self.upstream), decryptor: self.decryptor, state: self.state }
+    }
+
     pub fn new(upstream: R, decryptor: AesCtr) -> Self {
         Self {
             upstream,
@@ -447,6 +452,11 @@ pub struct CryptoWriter<W> {
 }
 
 impl<W> CryptoWriter<W> {
+    /// Adds transport pacing while preserving pending ciphertext and its exact offset.
+    pub(crate) fn map_inner<T>(self, map: impl FnOnce(W) -> T) -> CryptoWriter<T> {
+        CryptoWriter { upstream: map(self.upstream), encryptor: self.encryptor, state: self.state, scratch: self.scratch, max_pending_write: self.max_pending_write }
+    }
+
     pub fn new(upstream: W, encryptor: AesCtr, max_pending_write: usize) -> Self {
         let max_pending = if max_pending_write == 0 {
             DEFAULT_MAX_PENDING_WRITE

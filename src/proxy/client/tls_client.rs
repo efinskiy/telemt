@@ -103,7 +103,7 @@ impl RunningClientHandler {
         #[cfg(not(target_os = "linux"))]
         let response_write_options = TlsResponseWriteOptions::default();
 
-        let (mut tls_reader, tls_writer, tls_user) =
+        let (tls_reader, tls_writer, tls_user) =
             match handle_tls_handshake_with_shared_and_options(
                 &handshake,
                 read_half,
@@ -158,6 +158,11 @@ impl RunningClientHandler {
             tls_user.as_str(),
         );
 
+        let transport_lease = self.shared.traffic_limiter.acquire_lease(tls_user.as_str(), peer.ip());
+        if transport_lease.is_none() { return Err(ProxyError::Proxy("adaptive IP admission exhausted".into())); }
+        let mut tls_reader = tls_reader.map_inner(|inner| crate::proxy::traffic_limiter::AdaptiveIo::new(inner, transport_lease.clone()));
+        let tls_writer = tls_writer.map_inner(|inner| crate::proxy::traffic_limiter::AdaptiveIo::new(inner, transport_lease.clone()));
+
         debug!(peer = %peer, "Reading MTProto handshake through TLS");
         let mtproto_data = tls_reader.read_exact(HANDSHAKE_LEN).await?;
         let mtproto_handshake: [u8; HANDSHAKE_LEN] = mtproto_data[..]
@@ -183,7 +188,8 @@ impl RunningClientHandler {
                 // Switch fallback relay back to raw transport so the mask
                 // backend receives valid TLS records (not unwrapped payload).
                 let (reader, pending_plaintext) = reader.into_inner_with_pending_plaintext();
-                let writer = writer.into_inner();
+                let reader = reader.into_inner();
+                let writer = writer.into_inner().into_inner();
                 let pending_record = if pending_plaintext.is_empty() {
                     Vec::new()
                 } else {
@@ -212,7 +218,7 @@ impl RunningClientHandler {
         };
 
         Ok(HandshakeOutcome::NeedsRelay(Box::pin(
-            Self::handle_authenticated_static_with_shared(
+            Self::handle_authenticated_static_with_transport_lease(
                 crypto_reader,
                 crypto_writer,
                 success,
@@ -228,6 +234,7 @@ impl RunningClientHandler {
                 peer,
                 self.ip_tracker,
                 self.shared,
+                transport_lease,
             ),
         )))
     }

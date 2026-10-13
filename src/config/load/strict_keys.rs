@@ -3,6 +3,7 @@ use tracing::warn;
 use crate::error::{ProxyError, Result};
 
 const TOP_LEVEL_CONFIG_KEYS: &[&str] = &[
+    "shaping",
     "general",
     "logging",
     "network",

@@ -91,6 +91,32 @@ pub(crate) async fn handle_via_direct_with_shared_and_conntrack<R, W>(
     config: Arc<ProxyConfig>,
     buffer_pool: Arc<BufferPool>,
     rng: Arc<SecureRandom>,
+    route_rx: watch::Receiver<RouteCutoverState>,
+    route_snapshot: RouteCutoverState,
+    session_id: u64,
+    local_addr: SocketAddr,
+    session_cancel: CancellationToken,
+    shared: Arc<ProxySharedState>,
+    conntrack_close_policy: ConntrackClosePolicy,
+    quota_handle: UserQuotaHandle,
+) -> Result<()>
+where
+    R: AsyncRead + Unpin + Send + 'static,
+    W: AsyncWrite + Unpin + Send + 'static,
+{
+    handle_via_direct_with_shared_and_shaping(client_reader, client_writer, success, upstream_manager, stats, config, buffer_pool, rng, route_rx, route_snapshot, session_id, local_addr, session_cancel, shared, conntrack_close_policy, quota_handle, None).await
+}
+
+/// Preserves one shared flow when TLS framing already owns transport pacing.
+pub(crate) async fn handle_via_direct_with_shared_and_shaping<R, W>(
+    client_reader: CryptoReader<R>,
+    client_writer: CryptoWriter<W>,
+    success: HandshakeSuccess,
+    upstream_manager: Arc<UpstreamManager>,
+    stats: Arc<Stats>,
+    config: Arc<ProxyConfig>,
+    buffer_pool: Arc<BufferPool>,
+    rng: Arc<SecureRandom>,
     mut route_rx: watch::Receiver<RouteCutoverState>,
     route_snapshot: RouteCutoverState,
     session_id: u64,
@@ -99,6 +125,7 @@ pub(crate) async fn handle_via_direct_with_shared_and_conntrack<R, W>(
     shared: Arc<ProxySharedState>,
     conntrack_close_policy: ConntrackClosePolicy,
     quota_handle: UserQuotaHandle,
+    transport_lease: Option<Arc<crate::proxy::traffic_limiter::TrafficLease>>,
 ) -> Result<()>
 where
     R: AsyncRead + Unpin + Send + 'static,
@@ -148,9 +175,12 @@ where
 
     stats.increment_user_connects(user);
     let _direct_connection_lease = stats.acquire_direct_connection_lease();
-    let traffic_lease = shared
-        .traffic_limiter
-        .acquire_lease(user, success.peer.ip());
+    let transport_shaped = transport_lease.is_some();
+    let traffic_lease = transport_lease.or_else(|| shared.traffic_limiter.acquire_lease(user, success.peer.ip()));
+    let io_lease = if transport_shaped { None } else { traffic_lease.clone() };
+    if traffic_lease.is_none() { return Err(ProxyError::Proxy("adaptive IP admission exhausted".into())); }
+    let client_reader = client_reader.map_inner(|inner| crate::proxy::traffic_limiter::AdaptiveIo::new(inner, io_lease.clone()));
+    let client_writer = client_writer.map_inner(|inner| crate::proxy::traffic_limiter::AdaptiveIo::new(inner, io_lease.clone()));
 
     let buffer_pool_trim = Arc::clone(&buffer_pool);
     let relay_activity_timeout = if shared.conntrack_pressure_active() {

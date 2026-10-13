@@ -196,6 +196,7 @@ where
 
     let mut controller = SessionAdaptiveController::new(AdaptiveTier::Base);
 
+    let pacing_lease = traffic_lease.clone();
     let c2s_client = StatsIo::new_with_traffic_lease(
         client_reader,
         Arc::clone(&counters),
@@ -273,7 +274,7 @@ where
                         warn!(user = %user_owned, "User data quota reached, closing relay");
                         break AdaptiveRelayOutcome::ActivityTimeout;
                     }
-                    if idle >= activity_timeout {
+                    if idle >= activity_timeout && !pacing_lease.as_ref().is_some_and(|lease| lease.shaping_waiting()) {
                         warn!(
                             user = %user_owned,
                             c2s_bytes = counters.c2s_bytes.load(Ordering::Relaxed),

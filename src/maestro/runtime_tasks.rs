@@ -231,6 +231,8 @@ pub(crate) async fn spawn_runtime_tasks(
     let limiter = shared_state.traffic_limiter.clone();
     let mut config_rx_rate_limits = config_rx.clone();
     task_scope.spawn(async move {
+        let mut shaping_tick = tokio::time::interval(std::time::Duration::from_secs(1));
+        shaping_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         let mut prev_user_limits = config_rx_rate_limits
             .borrow()
             .access
@@ -242,10 +244,12 @@ pub(crate) async fn spawn_runtime_tasks(
             .cidr_rate_limits
             .clone();
         loop {
-            if config_rx_rate_limits.changed().await.is_err() {
-                break;
+            tokio::select! {
+                _ = shaping_tick.tick() => { limiter.tick_shaping(); continue; }
+                result = config_rx_rate_limits.changed() => { if result.is_err() { break; } }
             }
             let cfg = config_rx_rate_limits.borrow_and_update().clone();
+            let _ = limiter.apply_shaping_from_source(generation_id, cfg.shaping.clone());
             if prev_user_limits != cfg.access.user_rate_limits
                 || prev_cidr_limits != cfg.access.cidr_rate_limits
             {

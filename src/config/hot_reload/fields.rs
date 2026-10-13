@@ -228,6 +228,7 @@ impl HotFields {
 
 pub(super) fn overlay_hot_fields(old: &ProxyConfig, new: &ProxyConfig) -> ProxyConfig {
     let mut cfg = old.clone();
+    cfg.shaping = new.shaping.clone();
 
     cfg.general.log_level = new.general.log_level.clone();
     cfg.general.ad_tag = new.general.ad_tag.clone();

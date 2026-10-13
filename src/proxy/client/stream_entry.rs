@@ -304,7 +304,7 @@ where
 
             let (read_half, write_half) = tokio::io::split(stream);
 
-            let (mut tls_reader, tls_writer, tls_user) = match handle_tls_handshake_with_shared(
+            let (tls_reader, tls_writer, tls_user) = match handle_tls_handshake_with_shared(
                 &handshake, read_half, write_half, real_peer,
                 &config, &replay_checker, &rng, tls_cache.clone(),
                 shared.as_ref(),
@@ -350,6 +350,11 @@ where
             );
 
             debug!(peer = %peer, "Reading MTProto handshake through TLS");
+            let transport_lease = shared.traffic_limiter.acquire_lease(tls_user.as_str(), real_peer.ip());
+            if transport_lease.is_none() { return Err(ProxyError::Proxy("adaptive IP admission exhausted".into())); }
+            let mut tls_reader = tls_reader.map_inner(|inner| crate::proxy::traffic_limiter::AdaptiveIo::new(inner, transport_lease.clone()));
+            let tls_writer = tls_writer.map_inner(|inner| crate::proxy::traffic_limiter::AdaptiveIo::new(inner, transport_lease.clone()));
+
             let mtproto_data = tls_reader.read_exact(HANDSHAKE_LEN).await?;
             let mtproto_handshake: [u8; HANDSHAKE_LEN] = mtproto_data[..].try_into()
                 .map_err(|_| ProxyError::InvalidHandshake("Short MTProto handshake".into()))?;
@@ -365,7 +370,8 @@ where
                     // Switch fallback relay back to raw transport so the mask
                     // backend receives valid TLS records (not unwrapped payload).
                     let (reader, pending_plaintext) = reader.into_inner_with_pending_plaintext();
-                    let writer = writer.into_inner();
+                    let reader = reader.into_inner();
+                    let writer = writer.into_inner().into_inner();
                     let pending_record = if pending_plaintext.is_empty() {
                         Vec::new()
                     } else {
@@ -393,13 +399,14 @@ where
             };
 
             Ok(HandshakeOutcome::NeedsRelay(Box::pin(
-                RunningClientHandler::handle_authenticated_static_with_shared(
+                RunningClientHandler::handle_authenticated_static_with_transport_lease(
                     crypto_reader, crypto_writer, success,
                     upstream_manager, stats, config, buffer_pool, rng, me_pool,
                     me_pool_runtime,
                     route_runtime.clone(),
                     local_addr, real_peer, ip_tracker.clone(),
                     shared.clone(),
+                    transport_lease,
                 ),
             )))
         } else {

@@ -121,6 +121,7 @@ pub(super) async fn run_telemt_core(
     );
     let user_admission = UserAdmissionAuthority::new_with_quota_store(quota_store.clone());
     let traffic_limiter = TrafficLimiter::new();
+    let _ = traffic_limiter.apply_shaping_from_source(1, config.shaping.clone());
     let _ = traffic_limiter.apply_policy_from_source(
         1,
         config.access.user_rate_limits.clone(),

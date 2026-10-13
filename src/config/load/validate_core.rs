@@ -1,6 +1,7 @@
 use super::*;
 
 pub(super) fn validate(config: &mut ProxyConfig) -> Result<()> {
+    config.shaping.validate().map_err(ProxyError::Config)?;
     if let Some(path) = &config.general.proxy_config_v4_cache_path
         && path.trim().is_empty()
     {

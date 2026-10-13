@@ -1,5 +1,7 @@
 use super::*;
 
+/// Retains the existing unpaced parser contract for callers and invariant tests.
+#[allow(dead_code)]
 pub(crate) async fn read_client_payload_with_idle_policy_in<R>(
     client_reader: &mut CryptoReader<R>,
     proto_tag: ProtoTag,
@@ -17,7 +19,42 @@ pub(crate) async fn read_client_payload_with_idle_policy_in<R>(
 where
     R: AsyncRead + Unpin + Send + 'static,
 {
+    read_client_payload_with_shaping_idle_policy_in(client_reader, proto_tag, max_frame, buffer_pool,
+        forensics, frame_counter, stats, shared, idle_policy, idle_state, last_downstream_activity_ms,
+        session_started_at, None).await
+}
+
+/// Extends frame deadlines only by pacing time, preserving slow-peer and tiny-frame defenses.
+
+pub(crate) async fn read_client_payload_with_shaping_idle_policy_in<R>(
+    client_reader: &mut CryptoReader<R>,
+    proto_tag: ProtoTag,
+    max_frame: usize,
+    buffer_pool: &Arc<BufferPool>,
+    forensics: &RelayForensicsState,
+    frame_counter: &mut u64,
+    stats: &Stats,
+    shared: &ProxySharedState,
+    idle_policy: &RelayClientIdlePolicy,
+    idle_state: &mut RelayClientIdleState,
+    last_downstream_activity_ms: &AtomicU64,
+    session_started_at: Instant,
+    shaping: Option<&TrafficLease>,
+) -> Result<Option<(PooledBuffer, bool)>>
+where
+    R: AsyncRead + Unpin + Send + 'static,
+{
     const LEGACY_MAX_CONSECUTIVE_ZERO_LEN_FRAMES: u32 = 4;
+    let mut accounted_pause = shaping.map(|lease| lease.shaping_wait_ms(RateDirection::Up)).unwrap_or(0);
+
+    fn account_pacing(shaping: Option<&TrafficLease>, accounted: &mut u64, idle: &mut RelayClientIdleState) {
+        if let Some(lease) = shaping {
+            let total = lease.shaping_wait_ms(RateDirection::Up);
+            let pause = Duration::from_millis(total.saturating_sub(*accounted));
+            idle.last_client_frame_at = idle.last_client_frame_at.checked_add(pause).unwrap_or_else(Instant::now);
+            *accounted = total;
+        }
+    }
 
     async fn read_exact_with_policy<R>(
         client_reader: &mut CryptoReader<R>,
@@ -29,6 +66,8 @@ where
         forensics: &RelayForensicsState,
         stats: &Stats,
         shared: &ProxySharedState,
+        shaping: Option<&TrafficLease>,
+        accounted_pause: &mut u64,
         read_label: &'static str,
     ) -> Result<()>
     where
@@ -58,6 +97,7 @@ where
 
         let mut filled = 0usize;
         while filled < buf.len() {
+            account_pacing(shaping, accounted_pause, idle_state);
             let timeout_window = if idle_policy.enabled {
                 let now = Instant::now();
                 let downstream_ms = last_downstream_activity_ms.load(Ordering::Relaxed);
@@ -99,6 +139,7 @@ where
             };
 
             let read_result = timeout(timeout_window, client_reader.read(&mut buf[filled..])).await;
+            account_pacing(shaping, accounted_pause, idle_state);
             match read_result {
                 Ok(Ok(0)) => {
                     return Err(ProxyError::Io(std::io::Error::from(
@@ -109,6 +150,7 @@ where
                     filled = filled.saturating_add(n);
                 }
                 Ok(Err(e)) => return Err(ProxyError::Io(e)),
+                Err(_) if !idle_policy.enabled && shaping.is_some_and(|lease| lease.shaping_waiting_direction(RateDirection::Up)) => {}
                 Err(_) if !idle_policy.enabled => {
                     return Err(ProxyError::Io(std::io::Error::new(
                         std::io::ErrorKind::TimedOut,
@@ -177,6 +219,8 @@ where
                     forensics,
                     stats,
                     shared,
+                    shaping,
+                    &mut accounted_pause,
                     "abridged.first_len_byte",
                 )
                 .await
@@ -201,6 +245,8 @@ where
                         forensics,
                         stats,
                         shared,
+                    shaping,
+                    &mut accounted_pause,
                         "abridged.extended_len",
                     )
                     .await?;
@@ -226,6 +272,8 @@ where
                     forensics,
                     stats,
                     shared,
+                    shaping,
+                    &mut accounted_pause,
                     "len_prefix",
                 )
                 .await
@@ -323,6 +371,8 @@ where
             forensics,
             stats,
             shared,
+                    shaping,
+                    &mut accounted_pause,
             "payload",
         )
         .await?;

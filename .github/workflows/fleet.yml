@@ -1,0 +1,63 @@
+name: Fleet control and shaping
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  rust:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        toolchain: ['1.88.0', stable]
+    services:
+      postgres:
+        image: postgres:16-bookworm
+        env:
+          POSTGRES_USER: telemt_test
+          POSTGRES_PASSWORD: test-only-password
+          POSTGRES_DB: telemt_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U telemt_test"
+          --health-interval 5s --health-timeout 3s --health-retries 10
+    env:
+      TELEMT_TEST_DATABASE_URL: postgresql://telemt_test:test-only-password@127.0.0.1:5432/telemt_test
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.toolchain }}
+          components: clippy
+      - run: cargo check --all-targets --locked
+      - run: cargo test --locked
+      - run: cargo clippy --all-targets --locked
+      - run: cargo test --manifest-path tools/shaping-harness/Cargo.toml --locked
+      - run: cargo test --manifest-path admin/backend/Cargo.toml --locked -- --include-ignored
+      - run: cargo test --manifest-path agent/Cargo.toml --locked
+      - run: cargo clippy --manifest-path admin/backend/Cargo.toml --all-targets --locked -- -D warnings
+      - run: cargo clippy --manifest-path agent/Cargo.toml --all-targets --locked -- -D warnings
+  browser:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: admin/frontend
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: admin/frontend/package-lock.json
+      - run: npm ci --no-audit --no-fund
+      - run: npm run build
+      - run: npm test
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:browser
+  images:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - run: docker build -f deploy/fleet/Dockerfile --target admin -t telemt-admin:test .
+      - run: docker build -f deploy/fleet/Dockerfile --target probe -t telemt-probe:test .
+      - run: docker build -f deploy/fleet/Dockerfile --target node -t telemt-node:test .

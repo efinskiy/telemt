@@ -121,6 +121,10 @@ pub struct ProxyConfig {
     #[serde(default)]
     pub web: WebConfig,
 
+    /// Process-owned adaptive IP shaping policy.
+    #[serde(default)]
+    pub shaping: ShapingConfig,
+
     /// Timeout values used by client, fallback, and upstream operations.
     #[serde(default)]
     pub timeouts: TimeoutsConfig,
@@ -318,6 +322,7 @@ impl ProxyConfig {
 
     /// Validates cross-field configuration invariants after deserialization.
     pub fn validate(&self) -> Result<()> {
+        self.shaping.validate().map_err(ProxyError::Config)?;
         if self.access.users.is_empty() {
             return Err(ProxyError::Config("No users configured".to_string()));
         }

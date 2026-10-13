@@ -58,6 +58,7 @@ pub(super) async fn reserve_user_quota_with_yield(
     }
 }
 
+#[allow(dead_code)]
 pub(super) async fn wait_for_traffic_budget(
     lease: Option<&Arc<TrafficLease>>,
     direction: RateDirection,

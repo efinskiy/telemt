@@ -270,6 +270,7 @@ impl RuntimeGeneration {
             route_runtime: Arc::clone(&self.route_runtime),
             ip_tracker: Arc::clone(&self.ip_tracker),
             shared: Arc::clone(&self.proxy_shared),
+            transport_lease: None,
         }
     }
 

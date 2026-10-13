@@ -6,3 +6,10 @@ cache
 tlsfront
 *.tar
 *.tar.gz
+
+**/target
+**/node_modules
+**/dist
+**/secrets
+**/test-results
+**/playwright-report

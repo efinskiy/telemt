@@ -288,6 +288,7 @@ where
     let user_owned = user.to_string();
 
     // ── Combine split halves into bidirectional streams ──────────────
+    let watchdog_traffic_lease = traffic_lease.clone();
     let client_combined = CombinedStream::new(client_reader, client_writer);
     let mut server = CombinedStream::new(server_reader, server_writer);
     let quota_handle = stats.current_user_quota_handle(&user_owned);
@@ -326,7 +327,7 @@ where
             }
 
             // ── Activity timeout ────────────────────────────────────
-            if idle >= activity_timeout {
+            if idle >= activity_timeout && !watchdog_traffic_lease.as_ref().is_some_and(|lease| lease.shaping_waiting()) {
                 let c2s = wd_counters.c2s_bytes.load(Ordering::Relaxed);
                 let s2c = wd_counters.s2c_bytes.load(Ordering::Relaxed);
                 warn!(

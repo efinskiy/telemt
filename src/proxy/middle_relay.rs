@@ -47,7 +47,7 @@ mod session;
 
 pub(crate) use self::desync::DesyncDedupRotationState;
 pub(crate) use self::idle::{RelayIdleCandidateRegistry, note_global_relay_pressure};
-pub(crate) use self::session::handle_via_middle_proxy_with_conntrack;
+pub(crate) use self::session::{handle_via_middle_proxy_with_conntrack, handle_via_middle_proxy_with_shaping};
 
 use self::c2me::{
     C2MeCommand, acquire_c2me_payload_permit, c2me_queued_permit_budget, enqueue_c2me_command_in,
@@ -62,11 +62,11 @@ use self::desync::{RelayForensicsState, hash_ip_in, report_desync_frame_too_larg
 use self::idle::{
     RelayClientIdlePolicy, RelayClientIdleState, clear_relay_idle_candidate_in,
     maybe_evict_idle_candidate_on_pressure_in, note_relay_pressure_event_in,
-    read_client_payload_with_idle_policy_in, relay_pressure_event_seq_in,
+    read_client_payload_with_shaping_idle_policy_in, relay_pressure_event_seq_in,
 };
 use self::quota::{
     MiddleQuotaReserveError, quota_soft_cap, reserve_user_quota_with_yield,
-    wait_for_traffic_budget, wait_for_traffic_budget_or_cancel,
+    wait_for_traffic_budget_or_cancel,
 };
 
 #[cfg(test)]
@@ -84,6 +84,8 @@ pub(crate) use self::desync::{
 };
 #[cfg(test)]
 use self::idle::RelayIdleCandidateMeta;
+#[cfg(test)]
+pub(crate) use self::idle::read_client_payload_with_idle_policy_in;
 #[cfg(test)]
 pub(crate) use self::idle::{
     clear_relay_idle_candidate_for_testing, clear_relay_idle_pressure_state_for_testing_in_shared,

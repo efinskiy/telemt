@@ -1,0 +1,23 @@
+[package]
+name = "telemt-probe"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+
+[dependencies]
+tokio = { version = "1", features = ["full"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+aes = { version = "0.8.4", features = ["zeroize"] }
+ctr = { version = "0.9.2", features = ["zeroize"] }
+hmac = "0.12"
+sha2 = "0.10"
+rand = "0.9"
+hex = "0.4"
+subtle = "2"
+anyhow = "1"
+chrono = { version = "0.4", features = ["serde"] }
+zeroize = "1"
+x25519-dalek = "2"
+url = "2"

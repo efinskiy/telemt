@@ -11,6 +11,18 @@ pub(super) fn render(
     me_allows_debug: bool,
 ) {
     let limiter_metrics = shared_state.traffic_limiter.metrics_snapshot();
+    let shaping = shared_state.traffic_limiter.shaping_snapshot(0, 0);
+    for (name, kind, value) in [
+        ("enabled", "gauge", u64::from(shaping.enabled)),
+        ("retained_ips", "gauge", shaping.retained_ips as u64),
+        ("calculation_age_ms", "gauge", shaping.calculation_age_ms),
+        ("admission_rejected_total", "counter", shaping.admission_rejected_total),
+        ("throttle_total", "counter", shaping.throttle_total),
+        ("wait_ms_total", "counter", shaping.wait_ms_total),
+    ] {
+        let _ = writeln!(out, "# TYPE telemt_shaping_{name} {kind}\ntelemt_shaping_{name} {value}");
+    }
+
     let _ = writeln!(
         out,
         "# HELP telemt_rate_limiter_burst_bound_bytes Configured upper bound for one direct relay rate-limit burst"

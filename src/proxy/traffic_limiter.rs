@@ -3,7 +3,7 @@ use std::net::IpAddr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use arc_swap::ArcSwap;
+use arc_swap::{ArcSwap, ArcSwapOption};
 use dashmap::DashMap;
 use ipnetwork::IpNetwork;
 use parking_lot::Mutex as ParkingMutex;
@@ -20,6 +20,11 @@ mod lease;
 mod limiter;
 // Epoch and arithmetic helpers.
 mod helpers;
+// Adaptive control and cancellable I/O share the existing epoch budget implementation.
+mod adaptive;
+pub(crate) use adaptive::AdaptiveIo;
+#[cfg(test)]
+mod adaptive_tests;
 
 pub use helpers::next_refill_delay;
 use helpers::{
@@ -261,12 +266,15 @@ pub struct TrafficLease {
     client_ip: IpAddr,
     binding: ArcSwap<TrafficLeaseBinding>,
     refresh: ParkingMutex<()>,
+    adaptive: ArcSwapOption<adaptive::Flow>,
+    shaping_activity: ArcSwapOption<adaptive::ShapingActivity>,
 }
 
 /// Owns rate-limit policy, shared buckets, and limiter telemetry.
 pub struct TrafficLimiter {
     policy: ArcSwap<PolicySnapshot>,
     policy_update: ParkingMutex<()>,
+    adaptive: Arc<adaptive::Adaptive>,
     user_buckets: ShardedRegistry<UserBucket>,
     cidr_buckets: ShardedRegistry<CidrBucket>,
     user_scope: ScopeMetrics,

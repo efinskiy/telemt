@@ -1,0 +1,8 @@
+[Unit]
+Description=Renew Telemt administration HTTPS certificates
+After=docker.service
+Requires=docker.service
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/telemt/deploy/fleet
+ExecStart=/opt/telemt/deploy/fleet/renew.sh

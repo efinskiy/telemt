@@ -50,6 +50,7 @@ impl TrafficLimiter {
         Arc::new(Self {
             policy: ArcSwap::from_pointee(PolicySnapshot::default()),
             policy_update: ParkingMutex::new(()),
+            adaptive: adaptive::Adaptive::new(),
             user_buckets: ShardedRegistry::new(REGISTRY_SHARDS),
             cidr_buckets: ShardedRegistry::new(REGISTRY_SHARDS),
             user_scope: ScopeMetrics::default(),
@@ -176,6 +177,7 @@ impl TrafficLimiter {
         user: &str,
         client_ip: IpAddr,
     ) -> Option<Arc<TrafficLease>> {
+        let adaptive = if self.adaptive.enabled() { Some(self.adaptive.acquire(client_ip)?) } else { None };
         let policy = self.policy.load_full();
         let binding = self.build_binding(user, client_ip, &policy);
         Some(Arc::new(TrafficLease {
@@ -184,6 +186,8 @@ impl TrafficLimiter {
             client_ip,
             binding: ArcSwap::from(binding),
             refresh: ParkingMutex::new(()),
+            adaptive: ArcSwapOption::from(adaptive),
+            shaping_activity: ArcSwapOption::empty(),
         }))
     }
 

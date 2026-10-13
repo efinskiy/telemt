@@ -2,6 +2,8 @@ use super::*;
 
 // Read-only fixed API endpoints.
 mod read_routes;
+// Assigned interface addresses and active listener inventory.
+mod interface_inventory;
 // Fixed configuration and lifecycle mutations.
 mod fixed_routes;
 // Dynamic reload and user-resource routes.

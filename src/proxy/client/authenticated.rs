@@ -88,6 +88,32 @@ impl RunningClientHandler {
         R: AsyncRead + Unpin + Send + 'static,
         W: AsyncWrite + Unpin + Send + 'static,
     {
+        Self::handle_authenticated_static_with_transport_lease(client_reader, client_writer, success, upstream_manager, stats, config, buffer_pool, rng, me_pool, me_pool_runtime, route_runtime, local_addr, peer_addr, ip_tracker, shared, None).await
+    }
+
+    /// Dispatches a TLS transport already paced below its buffered record framing.
+    pub(super) async fn handle_authenticated_static_with_transport_lease<R, W>(
+        client_reader: CryptoReader<R>,
+        client_writer: CryptoWriter<W>,
+        success: HandshakeSuccess,
+        upstream_manager: Arc<UpstreamManager>,
+        stats: Arc<Stats>,
+        config: Arc<ProxyConfig>,
+        buffer_pool: Arc<BufferPool>,
+        rng: Arc<SecureRandom>,
+        me_pool: Option<Arc<MePool>>,
+        me_pool_runtime: Option<Arc<RwLock<Option<Arc<MePool>>>>>,
+        route_runtime: Arc<RouteRuntimeController>,
+        local_addr: SocketAddr,
+        peer_addr: SocketAddr,
+        ip_tracker: Arc<UserIpTracker>,
+        shared: Arc<ProxySharedState>,
+        transport_lease: Option<Arc<crate::proxy::traffic_limiter::TrafficLease>>,
+    ) -> Result<()>
+    where
+        R: AsyncRead + Unpin + Send + 'static,
+        W: AsyncWrite + Unpin + Send + 'static,
+    {
         run_authenticated(
             client_reader,
             client_writer,
@@ -103,6 +129,7 @@ impl RunningClientHandler {
                 route_runtime,
                 ip_tracker,
                 shared,
+                transport_lease,
             },
             local_addr,
             peer_addr,

@@ -334,6 +334,7 @@ impl ReloadSupervisor {
                 config.access.user_rate_limits.clone(),
                 config.access.cidr_rate_limits.clone(),
             );
+        let _ = new_runtime.proxy_shared.traffic_limiter.apply_shaping_from_source(new_runtime.id, config.shaping.clone());
         new_runtime
             .proxy_shared
             .direct_buffer_budget

@@ -34,6 +34,9 @@
 //! and uploads from iOS will break (media/file sending), while small traffic
 //! may still work.
 
+// Transport replacement preserves buffered TLS framing across authenticated admission.
+mod transport_map;
+
 use bytes::{Bytes, BytesMut};
 use std::io::{self, Error, ErrorKind, Result};
 use std::pin::Pin;

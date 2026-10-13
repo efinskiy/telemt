@@ -13,6 +13,9 @@ use std::path::PathBuf;
 
 use super::defaults::*;
 
+mod shaping;
+pub use shaping::ShapingConfig;
+
 mod access;
 mod api;
 mod censorship;

@@ -48,9 +48,13 @@ impl Drop for RelayConnLease {
     }
 }
 
-/// Runs Middle-End relay with explicit kernel-conntrack close publication policy.
-pub(crate) async fn handle_via_middle_proxy_with_conntrack<R, W>(
-    mut crypto_reader: CryptoReader<R>,
+// Compatibility entry keeps existing callers on the unwrapped transport path.
+mod entry;
+pub(crate) use entry::handle_via_middle_proxy_with_conntrack;
+
+/// Shares transport pacing with authenticated TLS instead of charging its framing buffer.
+pub(crate) async fn handle_via_middle_proxy_with_shaping<R, W>(
+    crypto_reader: CryptoReader<R>,
     crypto_writer: CryptoWriter<W>,
     success: HandshakeSuccess,
     me_pool: Arc<MePool>,
@@ -66,6 +70,7 @@ pub(crate) async fn handle_via_middle_proxy_with_conntrack<R, W>(
     shared: Arc<ProxySharedState>,
     conntrack_close_policy: ConntrackClosePolicy,
     quota_handle: UserQuotaHandle,
+    transport_lease: Option<Arc<TrafficLease>>,
 ) -> Result<()>
 where
     R: AsyncRead + Unpin + Send + 'static,
@@ -80,7 +85,10 @@ where
     let quota_user_stats = quota_limit.map(|_| stats.get_or_create_user_stats_handle(&user));
     let quota_handle = quota_limit.map(|_| quota_handle);
     let peer = success.peer;
-    let traffic_lease = shared.traffic_limiter.acquire_lease(&user, peer.ip());
+    let transport_shaped = transport_lease.is_some();
+    let traffic_lease = transport_lease.or_else(|| shared.traffic_limiter.acquire_lease(&user, peer.ip()));
+    let io_lease = if transport_shaped { None } else { traffic_lease.clone() };
+    if traffic_lease.is_none() { return Err(ProxyError::Proxy("adaptive IP admission exhausted".into())); }
     let proto_tag = success.proto_tag;
     let pool_generation = me_pool.current_generation();
 
@@ -176,6 +184,9 @@ where
     let session_started_at = forensics.started_at;
     let mut relay_idle_state = RelayClientIdleState::new(session_started_at);
     let last_downstream_activity_ms = Arc::new(AtomicU64::new(0));
+    if let Some(lease) = traffic_lease.as_ref() { lease.set_shaping_activity(last_downstream_activity_ms.clone(), session_started_at.into()); }
+    let mut crypto_reader = crypto_reader.map_inner(|inner| crate::proxy::traffic_limiter::AdaptiveIo::new(inner, io_lease.clone()).with_activity(last_downstream_activity_ms.clone(), session_started_at.into()));
+    let crypto_writer = crypto_writer.map_inner(|inner| crate::proxy::traffic_limiter::AdaptiveIo::new(inner, io_lease.clone()).with_activity(last_downstream_activity_ms.clone(), session_started_at.into()));
 
     let c2me_channel_capacity = config
         .general
@@ -327,7 +338,7 @@ where
                     route_watch_open = false;
                 }
             }
-            payload_result = read_client_payload_with_idle_policy_in(
+            payload_result = read_client_payload_with_shaping_idle_policy_in(
                 &mut crypto_reader,
                 proto_tag,
                 frame_limit,
@@ -340,17 +351,15 @@ where
                 &mut relay_idle_state,
                 last_downstream_activity_ms.as_ref(),
                 session_started_at,
+                traffic_lease.as_deref(),
             ) => {
                 match payload_result {
                     Ok(Some((payload, quickack))) => {
                         trace!(conn_id, bytes = payload.len(), "C->ME frame");
-                        wait_for_traffic_budget(
-                            traffic_lease.as_ref(),
-                            RateDirection::Up,
-                            payload.len() as u64,
-                            None,
-                        )
-                        .await?;
+                        tokio::select! {
+                            result = wait_for_traffic_budget_or_cancel(traffic_lease.as_ref(), RateDirection::Up, payload.len() as u64, &flow_cancel, stats.as_ref(), None) => result?,
+                            _ = session_cancel.cancelled() => { main_result = Err(ProxyError::UserDisabled { user: user.clone() }); break; }
+                        }
                         forensics.bytes_c2me = forensics
                             .bytes_c2me
                             .saturating_add(payload.len() as u64);

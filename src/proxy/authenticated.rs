@@ -9,9 +9,9 @@ use crate::config::ProxyConfig;
 use crate::crypto::SecureRandom;
 use crate::error::{ProxyError, Result};
 use crate::ip_tracker::UserIpTracker;
-use crate::proxy::direct_relay::handle_via_direct_with_shared_and_conntrack;
+use crate::proxy::direct_relay::{handle_via_direct_with_shared_and_conntrack, handle_via_direct_with_shared_and_shaping};
 use crate::proxy::handshake::HandshakeSuccess;
-use crate::proxy::middle_relay::{handle_via_middle_proxy, handle_via_middle_proxy_with_conntrack};
+use crate::proxy::middle_relay::{handle_via_middle_proxy, handle_via_middle_proxy_with_conntrack, handle_via_middle_proxy_with_shaping};
 use crate::proxy::route_mode::{RelayRouteMode, RouteRuntimeController};
 use crate::proxy::shared_state::{ConntrackClosePolicy, ProxySharedState};
 use crate::proxy::user_admission::UserIncarnation;
@@ -44,6 +44,8 @@ pub(crate) struct ClientRuntimeDeps {
     pub(crate) ip_tracker: Arc<UserIpTracker>,
     /// Process-shared admission and relay coordination state.
     pub(crate) shared: Arc<ProxySharedState>,
+    /// One authenticated TLS flow, paced beneath buffered record framing.
+    pub(crate) transport_lease: Option<Arc<crate::proxy::traffic_limiter::TrafficLease>>,
 }
 
 /// Runs admission and relay after a successful MTProxy handshake.
@@ -123,7 +125,11 @@ where
         && matches!(route_snapshot.mode, RelayRouteMode::Middle)
     {
         if let Some(pool) = selected_me_pool {
-            if conntrack_close_policy == ConntrackClosePolicy::Publish {
+            if deps.transport_lease.is_some() {
+                handle_via_middle_proxy_with_shaping(
+                    client_reader, client_writer, success, pool, Arc::clone(&deps.stats), Arc::clone(&deps.config), Arc::clone(&deps.buffer_pool), local_addr, Arc::clone(&deps.rng), deps.route_runtime.subscribe(), route_snapshot, session_id, session_cancel.clone(), Arc::clone(&deps.shared), conntrack_close_policy, quota_handle.clone(), deps.transport_lease.clone(),
+                ).await
+            } else if conntrack_close_policy == ConntrackClosePolicy::Publish {
                 handle_via_middle_proxy(
                     client_reader,
                     client_writer,
@@ -214,7 +220,28 @@ where
     R: AsyncRead + Unpin + Send + 'static,
     W: AsyncWrite + Unpin + Send + 'static,
 {
-    handle_via_direct_with_shared_and_conntrack(
+    if deps.transport_lease.is_none() {
+        return handle_via_direct_with_shared_and_conntrack(
+            client_reader,
+            client_writer,
+            success,
+            Arc::clone(&deps.upstream_manager),
+            Arc::clone(&deps.stats),
+            Arc::clone(&deps.config),
+            Arc::clone(&deps.buffer_pool),
+            Arc::clone(&deps.rng),
+            deps.route_runtime.subscribe(),
+            route_snapshot,
+            session_id,
+            local_addr,
+            session_cancel,
+            Arc::clone(&deps.shared),
+            conntrack_close_policy,
+            quota_handle,
+        )
+        .await;
+    }
+    handle_via_direct_with_shared_and_shaping(
         client_reader,
         client_writer,
         success,
@@ -231,6 +258,7 @@ where
         Arc::clone(&deps.shared),
         conntrack_close_policy,
         quota_handle,
+        deps.transport_lease.clone(),
     )
     .await
 }

@@ -11,6 +11,61 @@ pub(super) async fn handle(
     let api_cfg = &cfg.server.api;
     match (method.as_str(), normalized_path) {
         ("GET", "/web-status") => Ok(web_status::render(query, &shared.web_trace).await),
+        ("GET", "/v1/runtime/interfaces") => {
+            let data = super::interface_inventory::collect(cfg, shared.active_runtime.load().id)?;
+            Ok(success_response(StatusCode::OK, data, current_revision(&shared.config_path).await?))
+        }
+        ("GET", "/v1/fleet/compatibility") => {
+            let mut credentials: Vec<_> = cfg.access.users.iter().collect();
+            credentials.sort_unstable_by_key(|(user, _)| *user);
+            let users: Vec<_> = credentials.iter().map(|(user, secret)| (*user, *secret, cfg.access.is_user_enabled(user))).collect();
+            let mut listeners: Vec<_> = cfg.server.listeners.iter().map(|listener| serde_json::json!({"port": listener.port.unwrap_or(cfg.server.port), "transport": listener.transport}).to_string()).collect();
+            listeners.sort_unstable(); listeners.dedup();
+            let manifest = serde_json::json!({
+                "users": users,
+                "tls_domain": cfg.censorship.tls_domain,
+                "tls_domains": cfg.censorship.tls_domains,
+                "listeners": listeners,
+                "modes": cfg.general.modes,
+                "port": cfg.server.port,
+            });
+            let fingerprint = hex::encode(crate::crypto::sha256(manifest.to_string().as_bytes()));
+            let data = serde_json::json!({"fingerprint": fingerprint, "shaping_supported": true});
+            Ok(success_response(StatusCode::OK, data, current_revision(&shared.config_path).await?))
+        }
+        ("GET", "/v1/fleet/traffic") => {
+            let mut up = 0u64;
+            let mut down = 0u64;
+            for entry in shared.stats.iter_user_stats() {
+                up = up.saturating_add(entry.value().octets_from_client.load(Ordering::Relaxed));
+                down = down.saturating_add(entry.value().octets_to_client.load(Ordering::Relaxed));
+            }
+            let shaping = shared.proxy_shared.traffic_limiter.shaping_snapshot(0, 0);
+            if shaping.enabled { up = shaping.committed_bytes[0]; down = shaping.committed_bytes[1]; }
+            let data = serde_json::json!({"octets_from_client": up, "octets_to_client": down,
+                "available": shaping.enabled || shared.stats.telemetry_policy().user_enabled,
+                "counter_source": if shaping.enabled { "shaping" } else { "user_stats" },
+                "counter_instance": shaping.counter_instance,
+                "runtime_generation": shared.active_runtime.load().id,
+                "current_connections": shared.stats.get_current_connections_total()});
+            Ok(success_response(StatusCode::OK, data, current_revision(&shared.config_path).await?))
+        }
+        ("GET", "/v1/runtime/shaping") => {
+            let mut offset = 0usize;
+            let mut limit = 100usize;
+            if let Some(query) = query {
+                for (key, value) in url::form_urlencoded::parse(query.as_bytes()) {
+                    let parsed = value.parse::<usize>().map_err(|_| ApiFailure::bad_request("invalid shaping pagination"))?;
+                    match key.as_ref() {
+                        "offset" if parsed <= 131_072 => offset = parsed,
+                        "limit" if (1..=1000).contains(&parsed) => limit = parsed,
+                        _ => return Err(ApiFailure::bad_request("invalid shaping pagination")),
+                    }
+                }
+            }
+            let data = shared.proxy_shared.traffic_limiter.shaping_snapshot(offset, limit);
+            Ok(success_response(StatusCode::OK, data, current_revision(&shared.config_path).await?))
+        }
         ("GET", "/v1/health") => {
             let revision = current_revision(&shared.config_path).await?;
             let data = HealthData {
