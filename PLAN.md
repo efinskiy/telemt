@@ -162,3 +162,10 @@ See `deploy/fleet/VERIFICATION.md` for results and outstanding acceptance eviden
 - Pinned cargo-chef 0.1.71 installed successfully on Rust 1.88. All three actual project recipes remain byte-identical after source-only edits and reconstruct locked Cargo metadata. Twenty-four shell cases validate dependency/final binary build commands; six mocked manifest cases cover main/commit tagging, stale reruns and rejection of missing/invalid/extra digest artifacts. No live registry writes were performed by these checks.
 - Workflow changes are local until committed and pushed. Native GitHub image builds, GHCR publication and cold/warm timing comparison remain unexecuted here because the Docker Engine is unavailable. Deployment instructions cover package permissions, public/private pulls, pinned tags, existing node mounts and rollback without replacing .env or secrets.
 - Final Rust 1.88 aarch64-linux-musl optimized node build passed after the CI fixes; existing node warnings remain. No Rust test execution was added to image builds or service startup.
+
+## GitHub publication verification
+
+- [x] Commit and push the prepared application/deployment changes to main (`574a14c`).
+- [x] Confirm GitHub Build, Check and CodeQL succeed; frontend tests succeed and both Fleet Rust jobs reach integration tests.
+- [x] Diagnose the remaining CI environment failure: `--include-ignored` enables the real GeoIP test without providing `TELEMT_TEST_GEOIP_DATABASE`. Prepare and cache the real monthly DB-IP database before backend tests; keep test assertions unchanged.
+- [ ] Confirm the corrected commit passes every workflow and inspect all GHCR manifests for amd64/arm64 and matching main/SHA tags.

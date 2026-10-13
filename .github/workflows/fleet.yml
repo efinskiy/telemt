@@ -50,6 +50,22 @@ jobs:
       - run: cargo test --locked
       - run: cargo clippy --all-targets --locked
       - run: cargo test --manifest-path tools/shaping-harness/Cargo.toml --locked
+      - name: Resolve GeoIP database month
+        id: geoip-month
+        run: |
+          echo "month=$(date -u +%Y-%m)" >> "$GITHUB_OUTPUT"
+          echo "TELEMT_TEST_GEOIP_DATABASE=$RUNNER_TEMP/geoip/dbip-city-lite.mmdb" >> "$GITHUB_ENV"
+      - name: Cache GeoIP test database
+        id: geoip-cache
+        uses: actions/cache@v6.1.0
+        with:
+          path: ${{ env.TELEMT_TEST_GEOIP_DATABASE }}
+          key: fleet-geoip-dbip-city-${{ steps.geoip-month.outputs.month }}
+      - name: Prepare real GeoIP database for integration tests
+        if: steps.geoip-cache.outputs.cache-hit != 'true'
+        env:
+          GEOIP_MONTH: ${{ steps.geoip-month.outputs.month }}
+        run: python3 deploy/fleet/update_geoip.py --month "$GEOIP_MONTH" --destination "$TELEMT_TEST_GEOIP_DATABASE"
       - run: cargo test --manifest-path admin/backend/Cargo.toml --locked -- --include-ignored
       - run: cargo test --manifest-path agent/Cargo.toml --locked
       - run: cargo clippy --manifest-path admin/backend/Cargo.toml --all-targets --locked -- -D warnings
