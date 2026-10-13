@@ -47,7 +47,9 @@ mod session;
 
 pub(crate) use self::desync::DesyncDedupRotationState;
 pub(crate) use self::idle::{RelayIdleCandidateRegistry, note_global_relay_pressure};
-pub(crate) use self::session::{handle_via_middle_proxy_with_conntrack, handle_via_middle_proxy_with_shaping};
+pub(crate) use self::session::{
+    handle_via_middle_proxy_with_conntrack, handle_via_middle_proxy_with_shaping,
+};
 
 use self::c2me::{
     C2MeCommand, acquire_c2me_payload_permit, c2me_queued_permit_budget, enqueue_c2me_command_in,

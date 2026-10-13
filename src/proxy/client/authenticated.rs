@@ -88,7 +88,25 @@ impl RunningClientHandler {
         R: AsyncRead + Unpin + Send + 'static,
         W: AsyncWrite + Unpin + Send + 'static,
     {
-        Self::handle_authenticated_static_with_transport_lease(client_reader, client_writer, success, upstream_manager, stats, config, buffer_pool, rng, me_pool, me_pool_runtime, route_runtime, local_addr, peer_addr, ip_tracker, shared, None).await
+        Self::handle_authenticated_static_with_transport_lease(
+            client_reader,
+            client_writer,
+            success,
+            upstream_manager,
+            stats,
+            config,
+            buffer_pool,
+            rng,
+            me_pool,
+            me_pool_runtime,
+            route_runtime,
+            local_addr,
+            peer_addr,
+            ip_tracker,
+            shared,
+            None,
+        )
+        .await
     }
 
     /// Dispatches a TLS transport already paced below its buffered record framing.

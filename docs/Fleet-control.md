@@ -48,6 +48,54 @@ users, links, editable node config and runtime actions. `viewer` reads monitorin
 without tokens, user links or credential-bearing upstream URLs. The node's own
 validated API remains the authority for editable fields and revision conflicts.
 
+## Per-server overview
+
+The Overview shows per-node cards before the existing connection map and history.
+Cards include management/readiness/ME indicators, directional traffic, account and
+connection counts, shaper contention/idle caps, resource measurements, lifetime
+errors, interval-normalized handshake timeout rates, and DC endpoint coverage,
+RTT, sessions and writer counts. Clicking a card's map/history action selects
+that node without changing mutation targets.
+
+Update both Fleet and nodes for complete measurements. Existing nodes remain
+usable; missing fields display as unavailable. No database migration is needed.
+The monitor adds `/v1/runtime/system-resources`, `/v1/stats/dcs` and
+`/v1/runtime/gates` to its existing five-second collection. DC data requires the
+node's existing minimal-runtime API feature; an unavailable/disabled ME snapshot
+is not proof of public proxy failure. API/acceptance/ME indicators are distinct
+from external reachability probes.
+
+`GET /v1/runtime/system-resources` is an authenticated read-only Linux endpoint.
+It reads bounded proc files (1 MiB maximum per source, 500 ms read deadline),
+plus capacity of filesystem `/`. Filesystem inspection uses one bounded worker
+and a 500 ms response deadline; a stalled call retains its slot until it finishes.
+No shell commands, privileges or network configuration changes are required.
+Unavailable sources are null. Other operating systems report unsupported status.
+The visible proc/network namespace determines scope: inside a container these
+values need not equal container limits or the complete physical host. Filesystem
+usage measures capacity, not I/O utilization. CPU, SoftIRQ and process CPU need
+two observations; host boot identity protects host deltas, and process identity
+also protects process/TCP and handshake deltas across container replacement.
+TCP retransmissions are the interval delta of RetransSegs divided by OutSegs.
+Handshake timeouts per minute are extrapolated from the latest sampling interval,
+not a rolling-minute count.
+
+Alerts are explicit current-data rules: CPU idle below 10%, RAM or root filesystem
+usage at least 90%, failed readiness/management, degraded current DC coverage, or
+node measurements older than 15 seconds. Missing metrics never count as zero or
+healthy. DC status uses its own 30-second timestamp bound. Counters distinguish
+accounts from people, retained shaping IP history from active clients, and class
+limits from measured traffic. Encrypted message/media rates, provider/ASN,
+NFQWS status and verified masking are not inferred from unrelated counters.
+
+Only one expanded node card polls client details (every ten seconds). It joins
+the existing bounded live-client map with the first 1,000 IP shaping records and
+renders 25 rows per page; truncation and incomplete traffic coverage are explicit.
+Traffic sorting applies only to retrieved measurements, not a claimed global top.
+Closed cards cancel requests. Location uses the local city database; no client IP
+is sent to third-party lookup services. Missing or disabled shaping leaves IP
+speed unavailable. The original interactive map and historical charts remain.
+
 ## Local shaper
 
 `[shaping]` is optional and off by default. State lives in the process, outside
@@ -82,18 +130,50 @@ them through the revision-checked hot configuration API.
 
 For example, a 100 Mbit/s download channel with `bulk_down_bps = 20000000`
 reserves at least 80 Mbit/s for pending small traffic. Bulk can use the entire
-100 Mbit/s when that traffic does not need it. A fully served small request
+100 Mbit/s when that traffic does not need it, unless `bulk_idle_down_bps`
+sets a smaller idle ceiling. `bulk_idle_up_bps` independently caps upload
+borrowing. Zero retains the previous full-capacity behavior; a nonzero idle
+ceiling must be at least the effective contention cap and at most capacity. A fully served small request
 releases its unused reserve immediately; pending small demand reclaims capacity
 by the following epoch. Already transmitted bytes cannot be recalled. Demand
 expires after a short idle interval and is refreshed by actual reservation
 attempts. Stable calculated class shares survive unrelated IP arrivals/departures.
 
-Classification uses encrypted flow volume (default 256 KiB entry, 64 KiB exit
-within 60 seconds), not content, user intent or a guaranteed distinction between
-messages and files. Authenticated handshake bytes use the small-flow budget;
-unauthenticated public fallback retains its existing behavior. A reconnect starts
-a small logical flow but shares the retained IP's history, weight and class
-budgets. Thresholds and contention caps should be tuned from observed load.
+Flow classification still uses encrypted volume (default 256 KiB entry, 64 KiB
+exit within 60 seconds). A second classification tracks sustained load per IP
+and direction: at least `sustained_rate_bps` for `sustained_secs` consecutive
+measured seconds, plus `sustained_min_bytes` in the rolling minute. All three
+conditions are necessary. Defaults are 1 Mbit/s, 10 seconds and 8 MiB. Once
+classified, **all flows of that IP in that direction** use bulk, including new
+connections and different accounts. Recovery requires `sustained_recovery_secs`
+(default 30) consecutive measured seconds below half the rate threshold and
+without adaptive budget refusals. Refusals are retained over the entire sample
+interval and across reconnects; successful grants do not erase them. Missed
+control intervals provide no evidence of sustained load or recovery. Repeated
+calculations during a same-second reload retain unsampled bytes and refusals.
+
+This is a deliberate change for already-enabled shaping policies: persistent IP
+classification defaults on. Set `sustained_secs = 0` to retain the previous
+flow-volume classification alone. The whole shaper remains off by default.
+Rate thresholds use successful bytes rather than attempted demand; a sender
+already capped below the threshold cannot enter the sustained class on rate
+alone, but normal flow-volume bulk limits continue to apply.
+
+`main_dc_priority = true` optionally lets an authenticated connection selecting
+positive DC 1–5 retain the small-flow class until its IP becomes sustained.
+This uses routing information already parsed by Telemt, not encrypted payload
+inspection; the client chooses this hint, so it is disabled by default. Neither
+the hint nor reconnecting bypasses IP, global or static user/CIDR budgets.
+Authenticated handshake bytes share those budgets. Public unauthenticated
+fallback keeps its existing behavior. Main-DC priority cannot be enabled with
+persistent IP classification disabled. These controls do not promise to identify
+messages, files or user intent.
+
+Fleet exposes the new policy fields and directional `sustained`,
+`sustained_seconds`, `recovery_seconds` IP state. A classified IP may not be
+waiting at the moment of a snapshot; class and active throttling differ.
+For host egress queue management, installation, limitations and rollback see
+[Linux HTB/fq_codel deployment](../deploy/shaping/README.md).
 
 Controller calculations are generation-fenced, independent of static binding
 publication. Pacing is excluded from relay idle deadlines; genuine peer stalls

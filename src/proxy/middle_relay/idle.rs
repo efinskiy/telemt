@@ -3,11 +3,13 @@ use dashmap::DashMap;
 
 mod read;
 
-#[allow(unused_imports)]
-pub(crate) use self::read::{read_client_payload_with_idle_policy_in, read_client_payload_with_shaping_idle_policy_in};
 #[cfg(test)]
 pub(crate) use self::read::{
     read_client_payload, read_client_payload_legacy, read_client_payload_with_idle_policy,
+};
+#[allow(unused_imports)]
+pub(crate) use self::read::{
+    read_client_payload_with_idle_policy_in, read_client_payload_with_shaping_idle_policy_in,
 };
 
 #[derive(Default)]

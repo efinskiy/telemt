@@ -327,7 +327,11 @@ where
             }
 
             // ── Activity timeout ────────────────────────────────────
-            if idle >= activity_timeout && !watchdog_traffic_lease.as_ref().is_some_and(|lease| lease.shaping_waiting()) {
+            if idle >= activity_timeout
+                && !watchdog_traffic_lease
+                    .as_ref()
+                    .is_some_and(|lease| lease.shaping_waiting())
+            {
                 let c2s = wd_counters.c2s_bytes.load(Ordering::Relaxed);
                 let s2c = wd_counters.s2c_bytes.load(Ordering::Relaxed);
                 warn!(

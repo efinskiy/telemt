@@ -268,6 +268,7 @@ pub struct TrafficLease {
     refresh: ParkingMutex<()>,
     adaptive: ArcSwapOption<adaptive::Flow>,
     shaping_activity: ArcSwapOption<adaptive::ShapingActivity>,
+    main_dc: std::sync::atomic::AtomicBool,
 }
 
 /// Owns rate-limit policy, shared buckets, and limiter telemetry.

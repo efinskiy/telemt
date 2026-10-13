@@ -31,8 +31,8 @@ export function text(value: Json | undefined): string { return value === null ||
 export function rate(value: Json | undefined): string { if (typeof value !== 'number') return 'Нет данных'; return `${(value / 1e6).toFixed(2)} Мбит/с`; }
 export function bytes(value: Json | undefined): string { if (typeof value !== 'number') return 'Нет данных'; return `${(value / 1048576).toFixed(2)} МиБ`; }
 export function isStale(node: Node, now = Date.now()) { return !node.collected_at || now - Date.parse(node.collected_at) > 15000; }
-export async function readNode(id: string, path: string) {
-  const data = await api<{ status: number; response: { ok: boolean; data: Json; revision: string; error?: { code: string } } }>(`nodes/${id}/read?path=${encodeURIComponent(path)}`);
+export async function readNode(id: string, path: string, signal?: AbortSignal) {
+  const data = await api<{ status: number; response: { ok: boolean; data: Json; revision: string; error?: { code: string } } }>(`nodes/${id}/read?path=${encodeURIComponent(path)}`, 'GET', undefined, signal);
   if (data.status >= 400 || !data.response.ok) throw new Error(data.response.error?.code ? errorLabel(data.response.error.code) : `Нода вернула HTTP ${data.status}`);
   return data.response;
 }

@@ -86,9 +86,19 @@ where
     let quota_handle = quota_limit.map(|_| quota_handle);
     let peer = success.peer;
     let transport_shaped = transport_lease.is_some();
-    let traffic_lease = transport_lease.or_else(|| shared.traffic_limiter.acquire_lease(&user, peer.ip()));
-    let io_lease = if transport_shaped { None } else { traffic_lease.clone() };
-    if traffic_lease.is_none() { return Err(ProxyError::Proxy("adaptive IP admission exhausted".into())); }
+    let traffic_lease =
+        transport_lease.or_else(|| shared.traffic_limiter.acquire_lease(&user, peer.ip()));
+    let io_lease = if transport_shaped {
+        None
+    } else {
+        traffic_lease.clone()
+    };
+    if traffic_lease.is_none() {
+        return Err(ProxyError::Proxy("adaptive IP admission exhausted".into()));
+    }
+    if let Some(lease) = &traffic_lease {
+        lease.set_shaping_dc(success.dc_idx);
+    }
     let proto_tag = success.proto_tag;
     let pool_generation = me_pool.current_generation();
 
@@ -184,9 +194,24 @@ where
     let session_started_at = forensics.started_at;
     let mut relay_idle_state = RelayClientIdleState::new(session_started_at);
     let last_downstream_activity_ms = Arc::new(AtomicU64::new(0));
-    if let Some(lease) = traffic_lease.as_ref() { lease.set_shaping_activity(last_downstream_activity_ms.clone(), session_started_at.into()); }
-    let mut crypto_reader = crypto_reader.map_inner(|inner| crate::proxy::traffic_limiter::AdaptiveIo::new(inner, io_lease.clone()).with_activity(last_downstream_activity_ms.clone(), session_started_at.into()));
-    let crypto_writer = crypto_writer.map_inner(|inner| crate::proxy::traffic_limiter::AdaptiveIo::new(inner, io_lease.clone()).with_activity(last_downstream_activity_ms.clone(), session_started_at.into()));
+    if let Some(lease) = traffic_lease.as_ref() {
+        lease.set_shaping_activity(
+            last_downstream_activity_ms.clone(),
+            session_started_at.into(),
+        );
+    }
+    let mut crypto_reader = crypto_reader.map_inner(|inner| {
+        crate::proxy::traffic_limiter::AdaptiveIo::new(inner, io_lease.clone()).with_activity(
+            last_downstream_activity_ms.clone(),
+            session_started_at.into(),
+        )
+    });
+    let crypto_writer = crypto_writer.map_inner(|inner| {
+        crate::proxy::traffic_limiter::AdaptiveIo::new(inner, io_lease.clone()).with_activity(
+            last_downstream_activity_ms.clone(),
+            session_started_at.into(),
+        )
+    });
 
     let c2me_channel_capacity = config
         .general

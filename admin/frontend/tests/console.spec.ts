@@ -27,7 +27,7 @@ async function fixture(page: Page, role: 'owner' | 'operator' | 'viewer') {
   await page.goto('/'); await expect(page.getByRole('heading', { name: 'Обзор', exact: true })).toBeVisible();
 }
 
-test('owner dashboard and all sections render without browser errors', async ({ page }) => {
+test('owner dashboard and all sections render without browser errors', async ({ page }, testInfo) => {
   const errors: string[] = []; page.on('pageerror', error => errors.push(error.message));
   await fixture(page, 'owner');
   await expect(page.getByText('2 / 20')).toBeVisible();
@@ -36,7 +36,7 @@ test('owner dashboard and all sections render without browser errors', async ({ 
   }
   expect(errors).toEqual([]);
   await page.getByRole('navigation').getByRole('button', { name: 'Обзор', exact: true }).click();
-  await page.screenshot({ path: '/private/tmp/telemt-console-desktop.png', fullPage: true });
+  await page.screenshot({ path: testInfo.outputPath('telemt-console-desktop.png'), fullPage: true });
 });
 
 test('viewer has no write controls or secret links', async ({ page }) => {
@@ -63,11 +63,11 @@ test('shaping writes contain revision without connection churn, never an optimis
   await expect(page.getByRole('status')).not.toContainText('Завершено');
 });
 
-test('mobile cabinet stays inside viewport', async ({ page }) => {
+test('mobile cabinet stays inside viewport', async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 390, height: 844 }); await fixture(page, 'owner');
   await page.getByRole('navigation').getByRole('button', { name: 'Серверы', exact: true }).click();
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
-  await page.screenshot({ path: '/private/tmp/telemt-console-mobile.png', fullPage: true });
+  await page.screenshot({ path: testInfo.outputPath('telemt-console-mobile.png'), fullPage: true });
 });
 
 test('shaping form retains its displayed revision across later configuration changes', async ({ page }) => {
@@ -177,7 +177,7 @@ test('field configuration submits a sparse patch and retains the draft on confli
   expect(await page.getByLabel('Минимальная доля нового пула',{exact:true}).evaluate((el: HTMLInputElement) => el.validity.valid)).toBe(false);
 });
 
-test('shaping distinguishes shared-IP users, real waits and unavailable lifetime telemetry', async ({ page }) => {
+test('shaping distinguishes shared-IP users, real waits and unavailable lifetime telemetry', async ({ page }, testInfo) => {
   await fixture(page,'viewer');
   await page.route('**/api/nodes/*/read*', async route => {
     const target = new URL(route.request().url()).searchParams.get('path') ?? '';
@@ -191,10 +191,10 @@ test('shaping distinguishes shared-IP users, real waits and unavailable lifetime
   await expect(alice).toContainText('Ожидает бюджета'); await expect(bob).not.toContainText('Ожидает бюджета');
   await expect(alice).toContainText('250'); await expect(alice).toContainText('Телеметрия отключена');
   await expect(page.getByRole('button',{name:'Применить политику шейпера'})).toBeDisabled();
-  await page.screenshot({path:'/private/tmp/telemt-ru-shaping.png',fullPage:true});
+  await page.screenshot({path:testInfo.outputPath('telemt-ru-shaping.png'),fullPage:true});
 });
 
-test('diagnostics renders named facts and ignores responses from an abandoned tab', async ({page}) => {
+test('diagnostics renders named facts and ignores responses from an abandoned tab', async ({page}, testInfo) => {
   await fixture(page,'viewer');
   await page.route('**/api/nodes/*/read*', async route => {
     const target = new URL(route.request().url()).searchParams.get('path');
@@ -209,17 +209,17 @@ test('diagnostics renders named facts and ignores responses from an abandoned ta
   await page.waitForTimeout(500);
   await expect(page.getByText('Недостающие соединения',{exact:true})).toHaveCount(0);
   await expect(page.locator('pre,textarea')).toHaveCount(0);
-  await page.screenshot({path:'/private/tmp/telemt-ru-diagnostics.png',fullPage:true});
+  await page.screenshot({path:testInfo.outputPath('telemt-ru-diagnostics.png'),fullPage:true});
 });
 
-test('overview uses selected node history and renders Russian charts on mobile', async ({page}) => {
+test('overview uses selected node history and renders Russian charts on mobile', async ({page}, testInfo) => {
   await page.setViewportSize({width:390,height:844}); await fixture(page,'owner');
   await page.route('**/api/nodes/*/history', async route => route.fulfill({json:{ok:true,data:Array.from({length:12},(_,index)=>({at:new Date(Date.now()-(11-index)*60000).toISOString(),snapshot:{upload_bps:index===4?null:1000000*(index+1),download_bps:5000000*(index+1),traffic:{active_users:index+2,current_connections:(index+2)*5}}}))}}));
   await page.getByLabel('Просматриваемый сервер',{exact:true}).selectOption(second);
   await expect(page.getByRole('img',{name:/Скорость трафика/})).toBeVisible();
   await expect(page.getByRole('img',{name:/Пользователи и соединения/})).toBeVisible();
   expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
-  await page.screenshot({path:'/private/tmp/telemt-ru-charts-mobile.png',fullPage:true});
+  await page.screenshot({path:testInfo.outputPath('telemt-ru-charts-mobile.png'),fullPage:true});
 });
 
 test('explicit shaping reload resets edits even when the revision is unchanged', async ({page}) => {
@@ -249,7 +249,34 @@ test('DNS creation uses described fields and preserves selected members and reco
   expect((await sent).postDataJSON()).toEqual({name:'Проверка',domain:'proxy.example.org',zone_id:'zone-id',record_a_id:'a-id',record_aaaa_id:'',token:'fixture-token',active_node:second,node_ids:[first,second]});
 });
 
-test('redesign desktop themes and sidebar preferences persist', async ({ page }) => {
+test('DNS enrollment explains node prerequisites and preserves the form on rejection', async ({page}) => {
+  await fixture(page,'owner');
+  let code = 'dns_active_node_stale';
+  await page.route('**/api/groups', route => route.request().method() === 'POST'
+    ? route.fulfill({status:409,json:{ok:false,error:{code}}}) : route.fallback());
+  await page.getByRole('navigation').getByRole('button',{name:'Переключение DNS',exact:true}).click();
+  await page.getByRole('button',{name:'Создать группу',exact:true}).click();
+  const form = page.getByRole('dialog');
+  await form.getByLabel('Название группы',{exact:true}).fill('fleet');
+  await form.getByLabel('Домен прокси',{exact:true}).fill('proxy.example.org');
+  await form.getByLabel('Идентификатор зоны Cloudflare',{exact:true}).fill('0'.repeat(32));
+  await form.getByLabel('Идентификатор записи A',{exact:true}).fill('a'.repeat(32));
+  await form.getByLabel('Токен Cloudflare',{exact:true}).fill('fixture-token');
+  for (const [error,message] of [
+    ['dns_active_node_stale','Данные активной ноды устарели'],
+    ['dns_active_node_compatibility_unavailable','Не получены данные совместимости активной ноды'],
+    ['dns_active_ipv4_mismatch','A-запись Cloudflare не совпадает с публичным IPv4'],
+  ]) {
+    code = error;
+    await form.getByRole('button',{name:'Сохранить',exact:true}).click();
+    await expect(form.getByRole('alert')).toContainText(message);
+    await expect(form.getByLabel('Название группы',{exact:true})).toHaveValue('fleet');
+    await expect(form.getByLabel('Токен Cloudflare',{exact:true})).toHaveValue('fixture-token');
+    await expect(form.getByLabel('Идентификатор записи AAAA',{exact:true})).toHaveValue('');
+  }
+});
+
+test('redesign desktop themes and sidebar preferences persist', async ({ page }, testInfo) => {
   await page.emulateMedia({ colorScheme: 'light' });
   await fixture(page, 'owner');
   await page.route('**/api/nodes/*/connections-map', route => route.fulfill({ json: { ok: true, data: { available: true, generated_at: new Date().toISOString(), database: { status: 'ready', build_epoch: 1790812800 }, connections: 24, active_users: 9, total_ips: 3, cleanup_pending: 0, truncated: false, located_ips: 3, non_public_ips: 0, ips: [{ ip: '192.0.2.10', connections: 12, users: 5, location: { latitude: 55.75, longitude: 37.62, city: 'Москва', country: 'Россия' } }, { ip: '192.0.2.11', connections: 8, users: 3, location: { latitude: 59.94, longitude: 30.31, city: 'Санкт-Петербург', country: 'Россия' } }, { ip: '192.0.2.12', connections: 4, users: 1, location: { latitude: 52.52, longitude: 13.4, city: 'Берлин', country: 'Германия' } }], endpoints: [{ ip: '192.0.2.1', location: { latitude: 60.17, longitude: 24.94, city: 'Хельсинки', country: 'Финляндия' } }] } } }));
@@ -260,22 +287,22 @@ test('redesign desktop themes and sidebar preferences persist', async ({ page })
   await expect(page.getByRole('button', { name: 'Развернуть меню' })).toBeVisible();
   await page.getByRole('button', { name: 'Развернуть меню' }).click();
   await expect(page.locator('.sidebar .brand-name')).toBeVisible();
-  await page.screenshot({ path: '/private/tmp/telemt-redesign-light.png', fullPage: true });
+  await page.screenshot({ path: testInfo.outputPath('telemt-redesign-light.png'), fullPage: true });
   await page.getByRole('combobox', { name: 'Тема оформления' }).selectOption('dark');
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
   await page.reload();
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
   await expect(page.getByRole('button', { name: 'Свернуть меню' })).toBeVisible();
   await expect(page.locator('[data-map-point]')).toHaveCount(3);
-  await page.screenshot({ path: '/private/tmp/telemt-redesign-dark.png', fullPage: true });
+  await page.screenshot({ path: testInfo.outputPath('telemt-redesign-dark.png'), fullPage: true });
   await page.getByRole('navigation').getByRole('button', { name: 'Шейпер', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Политика шейпера' })).toBeVisible();
-  await page.screenshot({ path: '/private/tmp/telemt-redesign-shaping.png', fullPage: true });
+  await page.screenshot({ path: testInfo.outputPath('telemt-redesign-shaping.png'), fullPage: true });
   await page.getByRole('combobox', { name: 'Тема оформления' }).selectOption('system');
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
 });
 
-test('redesign mobile dock reaches secondary pages and keeps dialogs usable', async ({ page }) => {
+test('redesign mobile dock reaches secondary pages and keeps dialogs usable', async ({ page }, testInfo) => {
   const errors: string[] = []; page.on('pageerror', error => errors.push(error.message));
   await page.setViewportSize({ width: 390, height: 844 });
   await fixture(page, 'owner');
@@ -284,13 +311,40 @@ test('redesign mobile dock reaches secondary pages and keeps dialogs usable', as
   await page.getByRole('dialog').getByRole('button', { name: 'Диагностика', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Диагностика', exact: true })).toBeVisible();
   await expect(page.getByRole('dialog')).toHaveCount(0);
-  await page.screenshot({ path: '/private/tmp/telemt-redesign-mobile.png', fullPage: true });
+  await page.screenshot({ path: testInfo.outputPath('telemt-redesign-mobile.png'), fullPage: true });
   await page.getByRole('navigation').getByRole('button', { name: 'Серверы', exact: true }).click();
   await page.getByRole('button', { name: 'Добавить сервер', exact: true }).click();
   await expect(page.getByRole('dialog')).toBeVisible();
   await expect(page.getByRole('dialog').getByRole('button', { name: 'Сохранить', exact: true })).toBeEnabled();
-  await page.screenshot({ path: '/private/tmp/telemt-redesign-mobile-form.png', fullPage: true });
+  await page.screenshot({ path: testInfo.outputPath('telemt-redesign-mobile-form.png'), fullPage: true });
   await page.getByRole('button', { name: 'Закрыть окно' }).click();
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
   expect(errors).toEqual([]);
+});
+
+test('sustained IP policy exposes separate idle caps and recovery state', async ({ page }) => {
+  await fixture(page, 'operator');
+  await page.route('**/api/nodes/*/read*', async route => {
+    if ((new URL(route.request().url()).searchParams.get('path') ?? '').startsWith('/v1/runtime/shaping')) {
+      await route.fulfill({ json: { ok: true, data: { status: 200, response: { ok: true, data: {
+        enabled: true, policy: { up_bps: 100000000, down_bps: 100000000, priority_percent: 25, bulk_down_bps: 20000000, bulk_idle_down_bps: 60000000 },
+        retained_ips: 1, ips: [{ ip: '192.0.2.100', flows: 2, sustained: [false, true], sustained_seconds: [0, 10], recovery_seconds: [0, 3] }],
+      } } } } });
+    } else await route.fallback();
+  });
+  await page.getByRole('navigation').getByRole('button', { name: 'Шейпер', exact: true }).click();
+  await expect(page.getByText('Ограничен · восстановление 3 с', { exact: false })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Системные очереди Linux' })).toBeVisible();
+  await page.getByLabel('Бюджет объёмной загрузки при конкуренции (бит/с)', { exact: true }).fill('20000000');
+  await page.getByLabel('Потолок объёмной загрузки при свободном канале (бит/с)', { exact: true }).fill('60000000');
+  await page.getByLabel('Скорость длительной нагрузки IP (бит/с)', { exact: true }).fill('2000000');
+  await page.getByLabel('Длительность высокой нагрузки IP (с)', { exact: true }).fill('12');
+  await page.getByLabel('Объём длительной нагрузки IP за минуту (байт)', { exact: true }).fill('16777216');
+  await page.getByLabel('Время восстановления IP (с)', { exact: true }).fill('30');
+  await page.getByLabel('Приоритет соединений основного DC', { exact: true }).check();
+  const sent = page.waitForRequest(request => request.url().endsWith('/api/operations') && request.method() === 'POST');
+  await page.getByRole('button', { name: 'Применить политику шейпера' }).click();
+  const body = (await sent).postDataJSON();
+  expect(body.revisions[first]).toBe('revision-fixture');
+  expect(body.body.shaping).toMatchObject({ bulk_idle_down_bps: 60000000, sustained_rate_bps: 2000000, sustained_secs: 12, sustained_min_bytes: 16777216, sustained_recovery_secs: 30, main_dc_priority: true });
 });

@@ -2,12 +2,16 @@ name: Fleet control and shaping
 on:
   push:
   pull_request:
+concurrency:
+  group: fleet-check-${{ github.ref }}
+  cancel-in-progress: true
 permissions:
   contents: read
 jobs:
   rust:
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
         toolchain: ['1.88.0', stable]
     services:
@@ -29,6 +33,19 @@ jobs:
         with:
           toolchain: ${{ matrix.toolchain }}
           components: clippy
+      - name: Cache Rust dependencies and build artifacts
+        uses: actions/cache@v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+            admin/backend/target
+            agent/target
+            tools/shaping-harness/target
+          key: fleet-rust-${{ runner.os }}-${{ matrix.toolchain }}-${{ hashFiles('**/Cargo.lock') }}-${{ github.sha }}
+          restore-keys: |
+            fleet-rust-${{ runner.os }}-${{ matrix.toolchain }}-${{ hashFiles('**/Cargo.lock') }}-
       - run: cargo check --all-targets --locked
       - run: cargo test --locked
       - run: cargo clippy --all-targets --locked
@@ -54,10 +71,11 @@ jobs:
       - run: npm test
       - run: npx playwright install --with-deps chromium
       - run: npm run test:browser
-  images:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7.0.1
-      - run: docker build -f deploy/fleet/Dockerfile --target admin -t telemt-admin:test .
-      - run: docker build -f deploy/fleet/Dockerfile --target probe -t telemt-probe:test .
-      - run: docker build -f deploy/fleet/Dockerfile --target node -t telemt-node:test .
+      - name: Upload browser diagnostics
+        if: always()
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: fleet-browser-results
+          path: admin/frontend/test-results/
+          if-no-files-found: ignore
+          retention-days: 7

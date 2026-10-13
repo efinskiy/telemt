@@ -23,6 +23,24 @@ where
     R: AsyncRead + Unpin + Send + 'static,
     W: AsyncWrite + Unpin + Send + 'static,
 {
-    handle_via_middle_proxy_with_shaping(crypto_reader, crypto_writer, success, me_pool, stats, config, buffer_pool, local_addr, rng, route_rx, route_snapshot, session_id, session_cancel, shared, conntrack_close_policy, quota_handle, None).await
+    handle_via_middle_proxy_with_shaping(
+        crypto_reader,
+        crypto_writer,
+        success,
+        me_pool,
+        stats,
+        config,
+        buffer_pool,
+        local_addr,
+        rng,
+        route_rx,
+        route_snapshot,
+        session_id,
+        session_cancel,
+        shared,
+        conntrack_close_policy,
+        quota_handle,
+        None,
+    )
+    .await
 }
-

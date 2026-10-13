@@ -6,31 +6,56 @@ RUN npm ci --no-audit --no-fund
 COPY admin/frontend/ ./
 RUN npm run build
 
-FROM rust:1.88-bookworm AS admin-build
+# Keep dependency artifacts in ordinary layers so the GitHub cache exports them.
+FROM rust:1.88-bookworm AS chef
+RUN cargo install cargo-chef --version 0.1.71 --locked
 WORKDIR /build
+
+FROM chef AS admin-plan
 COPY admin/backend/ ./
+RUN cargo chef prepare --recipe-path /recipe.json --bin telemt-admin
+
+FROM chef AS admin-build
+COPY --from=admin-plan /recipe.json /recipe.json
 ARG CARGO_BUILD_JOBS
 RUN export CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-$(nproc)}" \
+    && cargo chef cook --release --locked --bin telemt-admin --recipe-path /recipe.json
+COPY admin/backend/ ./
+RUN export CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-$(nproc)}" \
     && printf 'Cargo build jobs: %s\n' "$CARGO_BUILD_JOBS" \
-    && cargo build --release --locked --jobs "$CARGO_BUILD_JOBS"
+    && cargo build --release --locked --bin telemt-admin --jobs "$CARGO_BUILD_JOBS"
 
-FROM rust:1.88-bookworm AS agent-build
-WORKDIR /build
+FROM chef AS agent-plan
 COPY agent/ ./
+RUN cargo chef prepare --recipe-path /recipe.json --bin telemt-probe
+
+FROM chef AS agent-build
+COPY --from=agent-plan /recipe.json /recipe.json
 ARG CARGO_BUILD_JOBS
 RUN export CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-$(nproc)}" \
+    && cargo chef cook --release --locked --bin telemt-probe --recipe-path /recipe.json
+COPY agent/ ./
+RUN export CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-$(nproc)}" \
     && printf 'Cargo build jobs: %s\n' "$CARGO_BUILD_JOBS" \
-    && cargo build --release --locked --jobs "$CARGO_BUILD_JOBS"
+    && cargo build --release --locked --bin telemt-probe --jobs "$CARGO_BUILD_JOBS"
 
-FROM rust:1.88-bookworm AS node-build
-WORKDIR /build
+FROM chef AS node-plan
 COPY Cargo.toml Cargo.lock ./
 COPY src/ ./src/
 COPY benches/ ./benches/
+RUN cargo chef prepare --recipe-path /recipe.json --bin telemt
+
+FROM chef AS node-build
+COPY --from=node-plan /recipe.json /recipe.json
 ARG CARGO_BUILD_JOBS
 RUN export CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-$(nproc)}" \
+    && cargo chef cook --release --locked --bin telemt --recipe-path /recipe.json
+COPY Cargo.toml Cargo.lock ./
+COPY src/ ./src/
+COPY benches/ ./benches/
+RUN export CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-$(nproc)}" \
     && printf 'Cargo build jobs: %s\n' "$CARGO_BUILD_JOBS" \
-    && cargo build --release --locked --jobs "$CARGO_BUILD_JOBS"
+    && cargo build --release --locked --bin telemt --jobs "$CARGO_BUILD_JOBS"
 
 FROM debian:bookworm-slim AS runtime
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates \

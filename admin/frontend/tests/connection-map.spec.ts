@@ -20,7 +20,7 @@ async function fixture(page: Page, map: (node: string) => unknown = () => snapsh
   await page.goto('/'); await expect(page.getByRole('heading', { name: 'Подключения на карте · Основной' })).toBeVisible();
 }
 
-test('live globe supports projection, zoom, selection and IP search without third-party requests', async ({ page }) => {
+test('live globe supports projection, zoom, selection and IP search without third-party requests', async ({ page }, testInfo) => {
   const errors: string[] = [], external: string[] = [];
   page.on('pageerror', error => errors.push(error.message));
   page.on('request', request => { if (!request.url().startsWith('http://127.0.0.1:5178')) external.push(request.url()); });
@@ -29,7 +29,7 @@ test('live globe supports projection, zoom, selection and IP search without thir
   await expect(page.locator('[data-map-point]')).toHaveCount(2);
   await expect(page.locator('.map-route')).toHaveCount(2);
   await expect(page.locator('.map-metrics')).toContainText('Пользователи онлайн');
-  await page.locator('.connections-map').screenshot({ path: '/private/tmp/telemt-connections-globe.png' });
+  await page.locator('.connections-map').screenshot({ path: testInfo.outputPath('telemt-connections-globe.png') });
   const before = await surface.locator('path').nth(2).getAttribute('d');
   await page.getByRole('button', { name: 'Увеличить карту' }).click();
   expect(await surface.locator('path').nth(2).getAttribute('d')).not.toBe(before);
@@ -43,7 +43,7 @@ test('live globe supports projection, zoom, selection and IP search without thir
   await expect(page.locator('.connections-map tbody tr')).toHaveCount(1);
   await expect(page.locator('.connections-map tbody')).toContainText('Координаты неизвестны');
   await page.getByRole('textbox', { name: 'Поиск подключений' }).fill('');
-  await page.screenshot({ path: '/private/tmp/telemt-connections-map-desktop.png', fullPage: true });
+  await page.screenshot({ path: testInfo.outputPath('telemt-connections-map-desktop.png'), fullPage: true });
   expect(errors).toEqual([]); expect(external).toEqual([]);
 });
 
@@ -70,13 +70,13 @@ test('missing geolocation keeps counters and unknown IP table', async ({ page })
   await expect(page.locator('.map-route')).toHaveCount(0);
 });
 
-test('mobile map fits screen and geographic sidebar stays inside the map section', async ({ page }) => {
+test('mobile map fits screen and geographic sidebar stays inside the map section', async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 390, height: 844 }); await fixture(page);
   await expect(page.locator('[data-map-point]')).toHaveCount(2);
   const position = await page.locator('.map-regions').evaluate(element => getComputedStyle(element).position);
   expect(position).not.toBe('fixed');
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
-  await page.screenshot({ path: '/private/tmp/telemt-connections-map-mobile.png', fullPage: true });
+  await page.screenshot({ path: testInfo.outputPath('telemt-connections-map-mobile.png'), fullPage: true });
 });
 
 test('truncated and deferred-cleanup snapshots have explicit notices and bounded map points', async ({ page }) => {
@@ -101,7 +101,7 @@ test('leaving overview stops polling and empty live snapshot is not an error', a
 });
 
 
-test('globe can be dragged, rotated by keyboard and expanded with reduced motion', async ({ page }) => {
+test('globe can be dragged, rotated by keyboard and expanded with reduced motion', async ({ page }, testInfo) => {
   await page.emulateMedia({ reducedMotion: 'reduce' }); await fixture(page);
   const surface = page.getByRole('group', { name: 'Интерактивная карта активных подключений' });
   await expect(page.locator('[data-map-point]')).toHaveCount(2);
@@ -115,7 +115,7 @@ test('globe can be dragged, rotated by keyboard and expanded with reduced motion
   await page.mouse.move(box.x + box.width * .3, box.y + box.height * .6);
   await page.mouse.down(); await page.mouse.move(box.x + box.width * .5, box.y + box.height * .6, { steps: 5 }); await page.mouse.up();
   expect(await geometry.getAttribute('d')).not.toBe(moved);
-  await page.locator('.connections-map').screenshot({ path: '/private/tmp/telemt-connections-globe.png' });
+  await page.locator('.connections-map').screenshot({ path: testInfo.outputPath('telemt-connections-globe.png') });
   await page.getByRole('button', { name: 'На весь экран' }).click();
   await expect(page.locator('.connection-globe')).toHaveClass(/is-fullscreen/);
   await page.getByRole('button', { name: 'Свернуть', exact: true }).click();

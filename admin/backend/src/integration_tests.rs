@@ -9,6 +9,7 @@ use std::collections::HashMap;
 mod rotation_cases;
 mod connection_maps;
 mod node_api_urls;
+mod dns_enrollment;
 
 #[derive(Clone)]struct Mock {config:Arc<std::sync::Mutex<Value>>,revision:Arc<std::sync::Mutex<String>>,records:Arc<std::sync::Mutex<HashMap<String,Value>>>,fail_patch:Arc<std::sync::atomic::AtomicBool>,stall_patch:Arc<std::sync::atomic::AtomicBool>,patch_started:Arc<tokio::sync::Notify>,user_ready:Arc<std::sync::atomic::AtomicBool>}
 async fn node(ExtractState(mock):ExtractState<Mock>,headers:HeaderMap,req:axum::extract::Request)->(StatusCode,Json<Value>) {
@@ -109,6 +110,7 @@ async fn postgres_router_auth_operations_probes_and_dns() {
     let response=app.clone().oneshot(Request::builder().uri("/agent/jobs").header("authorization",format!("Bearer {}",agents[0].1)).body(Body::empty()).unwrap()).await.unwrap();let response:Value=serde_json::from_slice(&to_bytes(response.into_body(),1024*1024).await.unwrap()).unwrap();let job=response["data"][0]["id"].clone();
     for expected in [StatusCode::OK,StatusCode::CONFLICT] {let response=app.clone().oneshot(Request::builder().method("POST").uri("/agent/results").header("authorization",format!("Bearer {}",agents[0].1)).header("content-type","application/json").body(Body::from(json!({"id":job,"network_ok":true,"reachable":true,"stage":"ok","latency_ms":1}).to_string())).unwrap()).await.unwrap();assert_eq!(response.status(),expected);}
     for node in &nodes {sqlx::query("UPDATE nodes SET collected_at=now(),snapshot=$2 WHERE id=$1").bind(node).bind(json!({"ready":true,"compatibility":{"fingerprint":"a".repeat(64)}})).execute(&state.db).await.unwrap();}
+    dns_enrollment::run(&state,&app,&owner,nodes[0],&mock).await;
     let last=chrono::Utc::now().timestamp()/15-1;
     for offset in 0..6 {for (agent,_) in &agents {for target in &nodes {for family in [4,6] {sqlx::query("INSERT INTO probe_jobs(id,round,agent_id,node_id,family,expires_at,completed_at,result) VALUES($1,$2,$3,$4,$6,now()+interval '1 minute',now(),$5)").bind(Uuid::new_v4()).bind(last-offset).bind(agent).bind(target).bind(json!({"network_ok":true,"reachable":true})).bind(family).execute(&state.db).await.unwrap();}}}}
     let (status,response,_)=request(&app,"/api/groups","POST",json!({"name":"proxy","domain":"proxy.test","zone_id":"00000000000000000000000000000000","record_a_id":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","record_aaaa_id":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","active_node":nodes[0],"node_ids":nodes,"token":"test-dns-token"}),Some(&owner),true).await;

@@ -53,6 +53,8 @@ mod runtime_selftest;
 mod runtime_stats;
 mod runtime_watch;
 mod runtime_zero;
+// Read-only operating-system telemetry for the Fleet overview.
+mod system_resources;
 mod users;
 // WEB runtime status and bounded controls remain separate from general API DTOs.
 mod web_runtime;
@@ -266,6 +268,7 @@ fn allowed_methods_for_path(path: &str) -> Option<&'static str> {
         "/v1/health"
         | "/v1/health/ready"
         | "/v1/system/info"
+        | "/v1/runtime/system-resources"
         | "/v1/runtime/gates"
         | "/v1/runtime/initialization"
         | "/v1/limits/effective"

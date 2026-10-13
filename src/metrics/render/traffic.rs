@@ -16,11 +16,18 @@ pub(super) fn render(
         ("enabled", "gauge", u64::from(shaping.enabled)),
         ("retained_ips", "gauge", shaping.retained_ips as u64),
         ("calculation_age_ms", "gauge", shaping.calculation_age_ms),
-        ("admission_rejected_total", "counter", shaping.admission_rejected_total),
+        (
+            "admission_rejected_total",
+            "counter",
+            shaping.admission_rejected_total,
+        ),
         ("throttle_total", "counter", shaping.throttle_total),
         ("wait_ms_total", "counter", shaping.wait_ms_total),
     ] {
-        let _ = writeln!(out, "# TYPE telemt_shaping_{name} {kind}\ntelemt_shaping_{name} {value}");
+        let _ = writeln!(
+            out,
+            "# TYPE telemt_shaping_{name} {kind}\ntelemt_shaping_{name} {value}"
+        );
     }
 
     let _ = writeln!(

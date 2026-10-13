@@ -1,0 +1,11 @@
+{
+  "interface": "eth0",
+  "egress_bps": 190000000,
+  "target_ms": 5,
+  "interval_ms": 100,
+  "packet_limit": 1024,
+  "memory_limit_bytes": 4194304,
+  "flows": 4096,
+  "quantum": 1514,
+  "burst_bytes": 32768
+}

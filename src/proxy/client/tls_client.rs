@@ -103,53 +103,52 @@ impl RunningClientHandler {
         #[cfg(not(target_os = "linux"))]
         let response_write_options = TlsResponseWriteOptions::default();
 
-        let (tls_reader, tls_writer, tls_user) =
-            match handle_tls_handshake_with_shared_and_options(
-                &handshake,
-                read_half,
-                write_half,
-                peer,
-                &config,
-                &replay_checker,
-                &self.rng,
-                self.tls_cache.clone(),
-                self.shared.as_ref(),
-                response_write_options,
-            )
-            .await
-            {
-                HandshakeResult::Success(result) => result,
-                HandshakeResult::BadClient { reader, writer } => {
-                    stats.increment_connects_bad_with_class("tls_handshake_bad_client");
-                    record_tls_fingerprint_bad_or_probe(
-                        stats.as_ref(),
-                        &config,
-                        peer.ip(),
-                        tls_fingerprint.as_ref(),
-                    );
-                    return Ok(masking_outcome(
-                        reader,
-                        writer,
-                        handshake.clone(),
-                        peer,
-                        local_addr,
-                        config.clone(),
-                        self.upstream_manager.clone(),
-                        self.beobachten.clone(),
-                        self.shared.clone(),
-                    ));
-                }
-                HandshakeResult::Error(e) => {
-                    record_tls_fingerprint_bad_or_probe(
-                        stats.as_ref(),
-                        &config,
-                        peer.ip(),
-                        tls_fingerprint.as_ref(),
-                    );
-                    increment_bad_on_unknown_tls_sni(stats.as_ref(), &e);
-                    return Err(e);
-                }
-            };
+        let (tls_reader, tls_writer, tls_user) = match handle_tls_handshake_with_shared_and_options(
+            &handshake,
+            read_half,
+            write_half,
+            peer,
+            &config,
+            &replay_checker,
+            &self.rng,
+            self.tls_cache.clone(),
+            self.shared.as_ref(),
+            response_write_options,
+        )
+        .await
+        {
+            HandshakeResult::Success(result) => result,
+            HandshakeResult::BadClient { reader, writer } => {
+                stats.increment_connects_bad_with_class("tls_handshake_bad_client");
+                record_tls_fingerprint_bad_or_probe(
+                    stats.as_ref(),
+                    &config,
+                    peer.ip(),
+                    tls_fingerprint.as_ref(),
+                );
+                return Ok(masking_outcome(
+                    reader,
+                    writer,
+                    handshake.clone(),
+                    peer,
+                    local_addr,
+                    config.clone(),
+                    self.upstream_manager.clone(),
+                    self.beobachten.clone(),
+                    self.shared.clone(),
+                ));
+            }
+            HandshakeResult::Error(e) => {
+                record_tls_fingerprint_bad_or_probe(
+                    stats.as_ref(),
+                    &config,
+                    peer.ip(),
+                    tls_fingerprint.as_ref(),
+                );
+                increment_bad_on_unknown_tls_sni(stats.as_ref(), &e);
+                return Err(e);
+            }
+        };
         record_tls_fingerprint_auth_success(
             stats.as_ref(),
             &config,
@@ -158,10 +157,19 @@ impl RunningClientHandler {
             tls_user.as_str(),
         );
 
-        let transport_lease = self.shared.traffic_limiter.acquire_lease(tls_user.as_str(), peer.ip());
-        if transport_lease.is_none() { return Err(ProxyError::Proxy("adaptive IP admission exhausted".into())); }
-        let mut tls_reader = tls_reader.map_inner(|inner| crate::proxy::traffic_limiter::AdaptiveIo::new(inner, transport_lease.clone()));
-        let tls_writer = tls_writer.map_inner(|inner| crate::proxy::traffic_limiter::AdaptiveIo::new(inner, transport_lease.clone()));
+        let transport_lease = self
+            .shared
+            .traffic_limiter
+            .acquire_lease(tls_user.as_str(), peer.ip());
+        if transport_lease.is_none() {
+            return Err(ProxyError::Proxy("adaptive IP admission exhausted".into()));
+        }
+        let mut tls_reader = tls_reader.map_inner(|inner| {
+            crate::proxy::traffic_limiter::AdaptiveIo::new(inner, transport_lease.clone())
+        });
+        let tls_writer = tls_writer.map_inner(|inner| {
+            crate::proxy::traffic_limiter::AdaptiveIo::new(inner, transport_lease.clone())
+        });
 
         debug!(peer = %peer, "Reading MTProto handshake through TLS");
         let mtproto_data = tls_reader.read_exact(HANDSHAKE_LEN).await?;

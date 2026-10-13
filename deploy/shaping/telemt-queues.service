@@ -1,0 +1,27 @@
+[Unit]
+Description=Telemt host egress HTB and fq_codel queues
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/usr/bin/python3 /opt/telemt/deploy/shaping/telemt-queues.py apply
+ExecStop=/usr/bin/python3 /opt/telemt/deploy/shaping/telemt-queues.py remove
+TimeoutStartSec=90
+TimeoutStopSec=30
+StateDirectory=telemt-queues
+StateDirectoryMode=0700
+UMask=0077
+CapabilityBoundingSet=CAP_NET_ADMIN
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_UNIX AF_NETLINK AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target

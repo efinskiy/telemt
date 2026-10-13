@@ -1,0 +1,11 @@
+# Requires Docker Compose 2.24.4+ for !reset support.
+services:
+  admin:
+    build: !reset null
+    image: "${TELEMT_IMAGE_PREFIX:-ghcr.io/efinskiy/telemt}-admin:${TELEMT_IMAGE_TAG:?Set TELEMT_IMAGE_TAG to main or sha-COMMIT}"
+  node:
+    build: !reset null
+    image: "${TELEMT_IMAGE_PREFIX:-ghcr.io/efinskiy/telemt}-node:${TELEMT_IMAGE_TAG:?Set TELEMT_IMAGE_TAG to main or sha-COMMIT}"
+  probe:
+    build: !reset null
+    image: "${TELEMT_IMAGE_PREFIX:-ghcr.io/efinskiy/telemt}-probe:${TELEMT_IMAGE_TAG:?Set TELEMT_IMAGE_TAG to main or sha-COMMIT}"

@@ -1,7 +1,7 @@
 //! Bounded control-plane views of existing admissions, independent of traffic telemetry.
 use super::*;
-use std::collections::BTreeMap;
 use serde::Serialize;
+use std::collections::BTreeMap;
 
 /// One normalized source IP shared by any number of authenticated accounts.
 #[derive(Debug, Serialize)]
@@ -45,15 +45,30 @@ impl UserIpTracker {
         'shards: for shard in self.shards.iter() {
             let shard = shard.read().await;
             for entries in shard.active_ips.values() {
-                if scanned_users >= MAX_ACTIVE_IP_ENTRIES as usize { truncated = true; break 'shards; }
+                if scanned_users >= MAX_ACTIVE_IP_ENTRIES as usize {
+                    truncated = true;
+                    break 'shards;
+                }
                 scanned_users += 1;
                 let mut active = false;
                 for (&ip, &count) in entries {
-                    if scanned >= MAX_ACTIVE_IP_ENTRIES as usize { truncated = true; break 'shards; }
+                    if scanned >= MAX_ACTIVE_IP_ENTRIES as usize {
+                        truncated = true;
+                        break 'shards;
+                    }
                     scanned += 1;
-                    if count == 0 { continue; }
-                    if !active { active_users = active_users.saturating_add(1); active = true; }
-                    let row = ips.entry(ip).or_insert(LiveClientIp { ip, connections: 0, users: 0 });
+                    if count == 0 {
+                        continue;
+                    }
+                    if !active {
+                        active_users = active_users.saturating_add(1);
+                        active = true;
+                    }
+                    let row = ips.entry(ip).or_insert(LiveClientIp {
+                        ip,
+                        connections: 0,
+                        users: 0,
+                    });
                     row.connections = row.connections.saturating_add(count);
                     row.users = row.users.saturating_add(1);
                     connections = connections.saturating_add(count);
@@ -62,8 +77,14 @@ impl UserIpTracker {
         }
         let total_ips = ips.len();
         let limit = limit.min(10_000);
-        LiveClientsSnapshot { ips: ips.into_values().take(limit).collect(), total_ips, connections, active_users,
-            cleanup_pending: self.cleanup_queue_len.load(Ordering::Relaxed), truncated: truncated || total_ips > limit }
+        LiveClientsSnapshot {
+            ips: ips.into_values().take(limit).collect(),
+            total_ips,
+            connections,
+            active_users,
+            cleanup_pending: self.cleanup_queue_len.load(Ordering::Relaxed),
+            truncated: truncated || total_ips > limit,
+        }
     }
 }
 
@@ -76,13 +97,31 @@ mod tests {
         let tracker = UserIpTracker::new();
         // Exercise the production data shape without relying on optional telemetry or a shaper.
         let mut shard = tracker.shards[0].write().await;
-        shard.active_ips.insert("alice".into(), [("192.0.2.1".parse().unwrap(), 3), ("2001:db8::1".parse().unwrap(), 2)].into());
-        shard.active_ips.insert("bob".into(), [("192.0.2.1".parse().unwrap(), 1)].into());
+        shard.active_ips.insert(
+            "alice".into(),
+            [
+                ("192.0.2.1".parse().unwrap(), 3),
+                ("2001:db8::1".parse().unwrap(), 2),
+            ]
+            .into(),
+        );
+        shard
+            .active_ips
+            .insert("bob".into(), [("192.0.2.1".parse().unwrap(), 1)].into());
         shard.active_ips.insert("rejected".into(), HashMap::new());
-        shard.active_ips.insert("zero".into(), [("192.0.2.3".parse().unwrap(), 0)].into());
+        shard
+            .active_ips
+            .insert("zero".into(), [("192.0.2.3".parse().unwrap(), 0)].into());
         drop(shard);
         let snapshot = tracker.live_clients(1).await;
-        assert_eq!((snapshot.total_ips, snapshot.connections, snapshot.active_users), (2, 6, 2));
+        assert_eq!(
+            (
+                snapshot.total_ips,
+                snapshot.connections,
+                snapshot.active_users
+            ),
+            (2, 6, 2)
+        );
         assert_eq!((snapshot.ips[0].connections, snapshot.ips[0].users), (4, 2));
         assert!(snapshot.truncated);
         assert_eq!(snapshot.cleanup_pending, 0);
@@ -100,15 +139,32 @@ mod tests {
         assert_eq!(tracker.live_clients(10_000).await.connections, 1);
         tracker.enqueue_cleanup("alice".into(), ip);
         let snapshot = tracker.live_clients(10_000).await;
-        assert_eq!((snapshot.connections, snapshot.active_users, snapshot.total_ips), (0, 0, 0));
+        assert_eq!(
+            (
+                snapshot.connections,
+                snapshot.active_users,
+                snapshot.total_ips
+            ),
+            (0, 0, 0)
+        );
     }
 
     #[tokio::test]
     async fn recent_history_is_not_a_live_connection() {
         let tracker = UserIpTracker::new();
-        tracker.shards[0].write().await.recent_ips.insert("alice".into(), [("192.0.2.1".parse().unwrap(), Instant::now())].into());
+        tracker.shards[0].write().await.recent_ips.insert(
+            "alice".into(),
+            [("192.0.2.1".parse().unwrap(), Instant::now())].into(),
+        );
         let snapshot = tracker.live_clients(10_000).await;
-        assert_eq!((snapshot.total_ips, snapshot.connections, snapshot.active_users), (0, 0, 0));
+        assert_eq!(
+            (
+                snapshot.total_ips,
+                snapshot.connections,
+                snapshot.active_users
+            ),
+            (0, 0, 0)
+        );
         assert!(snapshot.ips.is_empty());
     }
 }

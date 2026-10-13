@@ -43,12 +43,17 @@ impl CidrUserDirectionState {
             if observed_epoch > epoch {
                 return Err(BucketReserveError::StaleEpoch);
             }
-            let Some(mut active_debit) =
-                active_users.try_reserve_at(epoch, PACKED_USAGE_MASK, weight.clamp(1, 16), budget)?
+            let Some(mut active_debit) = active_users.try_reserve_at(
+                epoch,
+                PACKED_USAGE_MASK,
+                weight.clamp(1, 16),
+                budget,
+            )?
             else {
                 return Ok(false);
             };
-            let Some(next) = DirectionBucket::pack(epoch, if stamp_weight { weight } else { 0 }) else {
+            let Some(next) = DirectionBucket::pack(epoch, if stamp_weight { weight } else { 0 })
+            else {
                 return Err(BucketReserveError::StaleEpoch);
             };
             if !budget.take() {

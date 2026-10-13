@@ -385,8 +385,6 @@ impl CidrUserDirectionState {
             used: Arc::new(DirectionBucket::new(contention)),
         }
     }
-
-
 }
 
 #[cfg(test)]

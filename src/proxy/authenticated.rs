@@ -9,9 +9,14 @@ use crate::config::ProxyConfig;
 use crate::crypto::SecureRandom;
 use crate::error::{ProxyError, Result};
 use crate::ip_tracker::UserIpTracker;
-use crate::proxy::direct_relay::{handle_via_direct_with_shared_and_conntrack, handle_via_direct_with_shared_and_shaping};
+use crate::proxy::direct_relay::{
+    handle_via_direct_with_shared_and_conntrack, handle_via_direct_with_shared_and_shaping,
+};
 use crate::proxy::handshake::HandshakeSuccess;
-use crate::proxy::middle_relay::{handle_via_middle_proxy, handle_via_middle_proxy_with_conntrack, handle_via_middle_proxy_with_shaping};
+use crate::proxy::middle_relay::{
+    handle_via_middle_proxy, handle_via_middle_proxy_with_conntrack,
+    handle_via_middle_proxy_with_shaping,
+};
 use crate::proxy::route_mode::{RelayRouteMode, RouteRuntimeController};
 use crate::proxy::shared_state::{ConntrackClosePolicy, ProxySharedState};
 use crate::proxy::user_admission::UserIncarnation;
@@ -127,8 +132,25 @@ where
         if let Some(pool) = selected_me_pool {
             if deps.transport_lease.is_some() {
                 handle_via_middle_proxy_with_shaping(
-                    client_reader, client_writer, success, pool, Arc::clone(&deps.stats), Arc::clone(&deps.config), Arc::clone(&deps.buffer_pool), local_addr, Arc::clone(&deps.rng), deps.route_runtime.subscribe(), route_snapshot, session_id, session_cancel.clone(), Arc::clone(&deps.shared), conntrack_close_policy, quota_handle.clone(), deps.transport_lease.clone(),
-                ).await
+                    client_reader,
+                    client_writer,
+                    success,
+                    pool,
+                    Arc::clone(&deps.stats),
+                    Arc::clone(&deps.config),
+                    Arc::clone(&deps.buffer_pool),
+                    local_addr,
+                    Arc::clone(&deps.rng),
+                    deps.route_runtime.subscribe(),
+                    route_snapshot,
+                    session_id,
+                    session_cancel.clone(),
+                    Arc::clone(&deps.shared),
+                    conntrack_close_policy,
+                    quota_handle.clone(),
+                    deps.transport_lease.clone(),
+                )
+                .await
             } else if conntrack_close_policy == ConntrackClosePolicy::Publish {
                 handle_via_middle_proxy(
                     client_reader,
@@ -325,6 +347,7 @@ impl Drop for UserIpPermit {
 
 impl UserConnectionReservation {
     /// Creates an active reservation after both admission counters were acquired.
+    #[cfg(test)]
     pub(crate) fn new(
         stats: Arc<Stats>,
         ip_tracker: Arc<UserIpTracker>,

@@ -1,5 +1,5 @@
 //! Cloudflare reconciliation owns only enrolled record IDs and fences every uncertain write.
-use axum::{http::Method,Json};
+use axum::{http::{Method,StatusCode},Json};
 use chrono::{Utc,DateTime};
 use serde_json::{Value,json};
 use sqlx::Row;
@@ -16,24 +16,43 @@ pub(crate) async fn route(state:&State,user:&Session,parts:&[&str],method:&Metho
             Ok(Json(ok(json!(rows.into_iter().map(|r|json!({"id":r.get::<Uuid,_>("id"),"name":r.get::<String,_>("name"),"document":r.get::<Value,_>("document"),"active_node":r.get::<Option<Uuid>,_>("active_node"),"automatic":r.get::<bool,_>("automatic"),"last_switch":r.get::<Option<DateTime<Utc>>,_>("last_switch"),"status":r.get::<String,_>("status"),"observed":r.get::<Value,_>("observed")})).collect::<Vec<_>>()))))
         }
         ["groups"] if *method==Method::POST=>{
-            user.require("owner")?;let name=crate::state::bounded_name(&body,"name")?;let domain=field(&body,"domain")?;
-            if domain.len()>253||!domain.bytes().all(|c|c.is_ascii_alphanumeric()||b".-".contains(&c)){return Err(bad());}
-            let zone=field(&body,"zone_id")?;if zone.len()!=32||hex::decode(zone).is_err(){return Err(bad());}
-            let nodes=body.get("node_ids").and_then(Value::as_array).ok_or_else(bad)?;if nodes.is_empty()||nodes.len()>20{return Err(bad());}
-            let mut unique=std::collections::HashSet::new();let mut ordered=Vec::new();for node in nodes {let node=parse_id(node.as_str().ok_or_else(bad)?)?;if !unique.insert(node){return Err(bad());}ordered.push(node);crate::state::node(state,node).await?;}
-            for key in ["record_a_id","record_aaaa_id"] {if let Some(id)=body.get(key).and_then(Value::as_str).filter(|s|!s.is_empty()){if id.len()!=32||hex::decode(id).is_err(){return Err(bad());}}}
-            if body["record_a_id"].as_str().is_none_or(|s|s.is_empty())&&body["record_aaaa_id"].as_str().is_none_or(|s|s.is_empty()){return Err(bad());}
-            let count:i64=sqlx::query_scalar("SELECT count(*) FROM failover_groups").fetch_one(&state.db).await?;if count>=20{return Err(bad());}
+            user.require("owner")?;
+            let invalid=|code|ApiError(StatusCode::BAD_REQUEST,code);
+            let name=crate::state::bounded_name(&body,"name").map_err(|_|invalid("dns_invalid_name"))?;
+            let domain=field(&body,"domain").map_err(|_|invalid("dns_invalid_domain"))?;
+            if domain.len()>253||!domain.bytes().all(|c|c.is_ascii_alphanumeric()||b".-".contains(&c)){return Err(invalid("dns_invalid_domain"));}
+            let zone=field(&body,"zone_id").map_err(|_|invalid("dns_invalid_zone_id"))?;
+            if zone.len()!=32||hex::decode(zone).is_err(){return Err(invalid("dns_invalid_zone_id"));}
+            let nodes=body.get("node_ids").and_then(Value::as_array).ok_or_else(||invalid("dns_invalid_members"))?;
+            if nodes.is_empty()||nodes.len()>20{return Err(invalid("dns_invalid_members"));}
+            let mut unique=std::collections::HashSet::new();let mut ordered=Vec::new();
+            for node in nodes {
+                let node=node.as_str().and_then(|id|Uuid::parse_str(id).ok()).ok_or_else(||invalid("dns_invalid_members"))?;
+                if !unique.insert(node){return Err(invalid("dns_invalid_members"));}ordered.push(node);
+                crate::state::node(state,node).await.map_err(|error|if error.1=="invalid_request"{invalid("dns_member_not_found")}else{error})?;
+            }
+            for (key,code) in [("record_a_id","dns_invalid_a_record_id"),("record_aaaa_id","dns_invalid_aaaa_record_id")] {
+                if let Some(id)=body.get(key).and_then(Value::as_str).filter(|s|!s.is_empty()){if id.len()!=32||hex::decode(id).is_err(){return Err(invalid(code));}}
+            }
+            if body["record_a_id"].as_str().is_none_or(|s|s.is_empty())&&body["record_aaaa_id"].as_str().is_none_or(|s|s.is_empty()){return Err(invalid("dns_record_required"));}
+            let count:i64=sqlx::query_scalar("SELECT count(*) FROM failover_groups").fetch_one(&state.db).await?;
+            if count>=20{return Err(ApiError(StatusCode::CONFLICT,"dns_group_limit"));}
             let id=Uuid::new_v4();let mut document=json!({"domain":domain.to_ascii_lowercase(),"zone_id":zone,"node_ids":ordered,"record_a_id":body.get("record_a_id"),"record_aaaa_id":body.get("record_aaaa_id"),"configuration_verified":true});
-            let token=field(&body,"token")?;if token.is_empty()||token.len()>1024{return Err(bad());}
+            let token=field(&body,"token").map_err(|_|invalid("dns_invalid_token"))?;
+            if token.is_empty()||token.len()>1024{return Err(invalid("dns_invalid_token"));}
             let observed=read_records(state,&document,token).await?;
-            let active=parse_id(field(&body,"active_node")?)?;if !unique.contains(&active){return Err(bad());}
+            let active=body["active_node"].as_str().and_then(|id|Uuid::parse_str(id).ok()).ok_or_else(||invalid("dns_invalid_active_node"))?;
+            if !unique.contains(&active){return Err(invalid("dns_invalid_active_node"));}
             let n=crate::state::node(state,active).await?;let doc:Value=n.get("document");
             let snapshot:Value=n.get("snapshot");
-            if !fresh(n.get("collected_at"),15) || snapshot["compatibility"]["fingerprint"].as_str().is_none(){return Err(bad());}
+            // Operational prerequisites are not form errors; preserve the checks and identify the failed gate.
+            if !fresh(n.get("collected_at"),15){return Err(ApiError(StatusCode::CONFLICT,"dns_active_node_stale"));}
+            if snapshot["compatibility"]["fingerprint"].as_str().is_none(){return Err(ApiError(StatusCode::CONFLICT,"dns_active_node_compatibility_unavailable"));}
             document["fingerprint"]=snapshot["compatibility"]["fingerprint"].clone();
             document["port"]=doc["port"].clone();document["sni"]=doc["sni"].clone();
-            for (key,record) in observed.as_object().ok_or_else(bad)?{if record["content"]!=doc[if key=="A"{"ipv4"}else{"ipv6"}]{return Err(bad());}}
+            for (key,record) in observed.as_object().ok_or_else(bad)? {
+                if record["content"]!=doc[if key=="A"{"ipv4"}else{"ipv6"}]{return Err(ApiError(StatusCode::CONFLICT,if key=="A"{"dns_active_ipv4_mismatch"}else{"dns_active_ipv6_mismatch"}));}
+            }
             let cipher=state.vault.seal(token,&format!("dns:{id}"))?;
             sqlx::query("INSERT INTO failover_groups(id,name,document,token_cipher,active_node,observed) VALUES($1,$2,$3,$4,$5,$6)").bind(id).bind(name).bind(document).bind(cipher).bind(active).bind(observed).execute(&state.db).await?;
             audit(state,Some(user.id),"dns.enroll",&id.to_string(),json!({})).await?;Ok(Json(ok(json!({"id":id}))))

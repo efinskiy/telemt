@@ -72,7 +72,29 @@ interfaces. Production servers and DNS are not modified during development.
 - Evidence: frontend production build and strict TypeScript check passed. Exactly four essential browser scenarios ran: desktop section navigation, configuration draft/conflict handling, theme/sidebar persistence, and mobile dock/dialog navigation. Light/dark overview, shaping, mobile diagnostics and bottom-sheet screenshots inspected. No backend, protocol, load or broad regression suites run for this visual-only request.
 - Theme follows the system by default; explicit choice and desktop sidebar collapse are persisted locally. All allowed pages remain reachable through the desktop rail or mobile More sheet. Changes are local and not deployed.
 
+## Sustained IP shaping and Linux queue management
+
+- [x] Add tested directional sustained-IP detection (rate, duration, volume and recovery), retaining history across reconnects and reloads.
+- [x] Add independent idle bulk ceilings without relaxing global, IP, user or CIDR limits.
+- [x] Propagate authenticated DC hints through Direct/Middle/WEB; sustained IP limits override priority hints.
+- [x] Ship opt-in Linux HTB/fq_codel management with ownership checks, bounded commands, rollback, systemd deployment and status.
+- [x] Expose new settings and IP state in Fleet with descriptions, examples and rollout instructions.
+- [x] Run production limiter regressions, Linux build checks, queue-manager tests and essential frontend checks; record unavailable live-kernel validation explicitly.
+- [ ] Execute the opt-in real Linux namespace test and measure full-server AQM latency/throughput before production rollout.
+
+- Classification contract: sustained IP load requires rate, consecutive duration and rolling volume together. It defaults to 1 Mbit/s, 10 seconds and 8 MiB when shaping is enabled; `sustained_secs = 0` restores flow-only classification. Recovery defaults to 30 measured seconds below half the threshold without adaptive budget pressure. Same-second reload samples and refusal history survive successful grants/reconnects. Existing flow-volume thresholds remain in effect. Authenticated main-DC priority is opt-in, client-selected and never a message-content guarantee.
+- Kernel contract: a separate host service owns one all-egress HTB/fq_codel tree, including upstream and non-Telemt traffic. No IFB ingress changes or NET_ADMIN privilege on the Telemt process. Creation rejects foreign roots, removal checks the saved configuration including class-level filters, and matching state recovers over kernel defaults after reboot. Installation/rollback instructions and tunable examples are in `deploy/shaping/README.md`.
+- Evidence: idle ceiling and two pressure-history regressions failed before their fixes. Rust 1.88 production limiter harness: 63 passed; optional 10,000-logical-flow run passed with small-flow p95 157 ms and controller calculation 6 ms (not real relay sockets or a Linux kernel queue). Linux aarch64-musl all-target check and optimized node build passed. Frontend production build/typecheck, 27 unit tests and three essential browser scenarios passed. Python queue lifecycle: nine passed, one real-kernel namespace test skipped on macOS. Existing tests were not weakened. Read-only subagents reviewed protocol integration and real iproute2/kernel output contracts.
+- Strict harness Clippy remains blocked by three pre-existing findings: `adaptive/control.rs:46` suspicious_else_formatting and `traffic_limiter/tests.rs:352,366` manual_contains/int_plus_one. The node build reports 47 existing unused/dead-code warnings; these unrelated warnings were not changed. No claim of a warning-free whole-repository build.
+- Live Linux namespace/physical queue verification and full relay throughput remain unavailable here: macOS host, no running Docker Engine. No production hosts, DNS, deployment secrets or network policies changed. Update the node before saving new fields from Fleet; older node versions reject unknown shaping fields.
+
 ## Current verification
+
+- [x] Reproduce DNS enrollment failures with valid fields and unavailable compatibility, stale monitoring or mismatched addresses.
+- [x] Replace generic DNS enrollment errors with specific codes and actionable Russian messages without relaxing enrollment checks.
+- [x] Verify backend enrollment regression cases and essential frontend DNS form behavior; no live DNS changes.
+
+- Evidence: the new PostgreSQL router regression reproduced the former generic 400 before the fix; it now verifies separate stale/compatibility/IPv4/IPv6 refusals and successful IPv4-only enrollment without DNS mutation. Rust 1.88 release build and strict all-target Clippy passed. Frontend production build/typecheck and exactly two DNS browser scenarios passed, including field retention after errors. The temporary PostgreSQL instance was stopped. The deployed failure's exact gate remains unknown pending node snapshot diagnostics; no production deployment or DNS changes were performed.
 
 - [x] Reproduce HTML responses at the Fleet browser API boundary and replace raw JSON parser failures with actionable routing diagnostics; keep upstream bodies out of error messages.
 - [x] Verify response handling (14 frontend unit tests), production build/type checking, and 10 browser scenarios including Users recovery after an HTML 502.
@@ -108,3 +130,35 @@ interfaces. Production servers and DNS are not modified during development.
   <=500 ms below priority demand, and <=3% full-server throughput regression with shaping off.
 
 See `deploy/fleet/VERIFICATION.md` for results and outstanding acceptance evidence.
+
+
+## Deployment binary selection
+
+- [x] Inspect node/Fleet startup and image builds: no Rust test invocation exists in the deployment path.
+- [x] Select only the named production binaries in all three Rust image stages; preserve parallelism and runtime health checks.
+- [x] Verify all three target names through Cargo metadata and 12 build-command cases (automatic/empty/1/16 jobs), without running Rust tests. Full Docker image builds were not executed because the local Docker Engine is unavailable.
+
+## Per-server overview cards
+
+- [x] Add bounded read-only Linux resource telemetry and process/boot-safe monitor deltas; collect existing DC and route status.
+- [x] Build Russian per-server cards, current alerts, traffic/shaping/resources/error/DC sections while preserving map/history.
+- [x] Add on-demand bounded client IP tables with traffic/geography and explicit unavailable/stale states.
+- [x] Run essential frontend scenarios and builds; document measurement scope and limitations.
+
+
+- Evidence: frontend production build/typecheck and three focused Chromium scenarios passed (rich per-node cards/IP drilldown, stale/missing data, existing mobile history). Desktop and 390 px mobile screenshots inspected in both existing visual layouts, including dark cards and a long IPv6 address. No broad frontend suite was added.
+- Backend release build and strict all-target Clippy passed; the focused counter-identity regression passed. A temporary harness executed the actual resource parser test and unsupported-OS response test (two passed). Linux Rust 1.88 all-target check and final aarch64-musl release build passed with the existing 47 node warnings. Real Linux resource collection, Docker deployment and production integration were not executed from this macOS environment.
+- The new resource endpoint is read-only and bounded. The data plane, protocol, shaper scheduling, credentials and mutation targets are unchanged. CPU/TCP deltas are reset appropriately across reboot/process changes; null sources remain unavailable. Update node plus Fleet; no database migration is required. Scope and limitations are documented in `docs/Fleet-control.md`.
+
+## Cached GitHub images and CI repair
+
+- [x] Inspect actual GitHub run logs: release/images succeed; formatting, test-only constructor lint and platform-specific screenshot paths fail.
+- [x] Fix confirmed CI failures without disabling assertions or checks; formatting explicitly authorized.
+- [x] Add cached native amd64/arm64 GHCR builds and commit-addressed images for node, Fleet and probe.
+- [x] Add image-only Fleet and standalone-node deployment with upgrade/rollback instructions.
+- [x] Validate workflow syntax, Compose resolution, Rust checks and affected browser scenarios; report unavailable live publication.
+
+- Evidence: actionlint passes for all three changed workflows; both registry/standalone Compose configurations resolve with no application build entries. Eleven affected Chromium scenarios and their production frontend build passed; screenshot assertions were not weakened. Rust 1.88 formatting check and Linux all-target Clippy pass (existing warnings remain).
+- Pinned cargo-chef 0.1.71 installed successfully on Rust 1.88. All three actual project recipes remain byte-identical after source-only edits and reconstruct locked Cargo metadata. Twenty-four shell cases validate dependency/final binary build commands; six mocked manifest cases cover main/commit tagging, stale reruns and rejection of missing/invalid/extra digest artifacts. No live registry writes were performed by these checks.
+- Workflow changes are local until committed and pushed. Native GitHub image builds, GHCR publication and cold/warm timing comparison remain unexecuted here because the Docker Engine is unavailable. Deployment instructions cover package permissions, public/private pulls, pinned tags, existing node mounts and rollback without replacing .env or secrets.
+- Final Rust 1.88 aarch64-linux-musl optimized node build passed after the CI fixes; existing node warnings remain. No Rust test execution was added to image builds or service startup.

@@ -6,7 +6,18 @@ require the control service to forward traffic. Run on Linux with Docker Engine
 and Compose v2. Rust builders use MSRV 1.88. The administration domain must be
 separate from the proxy's TLS camouflage domain.
 
+## Prebuilt images
+
+For GitHub-built images, image-only deployment, updates and rollback, follow
+[IMAGES.md](IMAGES.md). The instructions below retain the local-source build path.
+
 ## Build parallelism
+
+Image builds select only the service's release binary (`--bin telemt`,
+`--bin telemt-admin`, or `--bin telemt-probe`). They do not build or execute Rust
+test targets. Compose startup runs the compiled services and health checks;
+Rust tests run separately in CI or through the manual verification commands.
+Long `cargo build --release` steps are compilation and optimization, not tests.
 
 All Rust image stages explicitly select the CPU count reported by `nproc` inside
 the Docker builder and print `Cargo build jobs: N`. Override the job count with a

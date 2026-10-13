@@ -108,6 +108,10 @@ pub(super) async fn handle(
             };
             Ok(success_response(status_code, data, revision))
         }
+        ("GET", "/v1/runtime/system-resources") => {
+            let data = crate::api::system_resources::collect().await;
+            Ok(success_response(StatusCode::OK, data, current_revision(&shared.config_path).await?))
+        }
         ("GET", "/v1/system/info") => {
             let revision = current_revision(&shared.config_path).await?;
             let data = build_system_info_data(shared, cfg, &revision);

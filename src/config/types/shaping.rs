@@ -14,6 +14,20 @@ pub struct ShapingConfig {
     pub bulk_up_bps: u64,
     /// Bulk download ceiling during priority demand; idle priority capacity remains borrowable.
     pub bulk_down_bps: u64,
+    /// Bulk upload borrowing ceiling when priority traffic is idle; zero uses channel capacity.
+    pub bulk_idle_up_bps: u64,
+    /// Bulk download borrowing ceiling when priority traffic is idle; zero uses channel capacity.
+    pub bulk_idle_down_bps: u64,
+    /// Minimum measured directional IP rate for a sustained-load interval.
+    pub sustained_rate_bps: u64,
+    /// Consecutive high-rate seconds required; zero disables persistent IP classification.
+    pub sustained_secs: u64,
+    /// Minimum directional IP volume in the rolling minute, in addition to rate and duration.
+    pub sustained_min_bytes: u64,
+    /// Consecutive low-load seconds without budget pressure required to clear the IP class.
+    pub sustained_recovery_secs: u64,
+    /// Authenticated positive DC indices may retain small-flow priority until the IP is sustained.
+    pub main_dc_priority: bool,
     /// Percentage reserved for small flows while both classes have demand.
     pub priority_percent: u8,
     /// Rolling directional bytes at which a flow becomes bulk.
@@ -27,8 +41,22 @@ pub struct ShapingConfig {
 impl Default for ShapingConfig {
     fn default() -> Self {
         Self {
-            enabled: false, up_bps: 0, down_bps: 0, bulk_up_bps: 0, bulk_down_bps: 0, priority_percent: 25,
-            bulk_enter_bytes: 256 * 1024, bulk_exit_bytes: 64 * 1024, max_ips: 32_768,
+            enabled: false,
+            up_bps: 0,
+            down_bps: 0,
+            bulk_up_bps: 0,
+            bulk_down_bps: 0,
+            priority_percent: 25,
+            bulk_idle_up_bps: 0,
+            bulk_idle_down_bps: 0,
+            sustained_rate_bps: 1_000_000,
+            sustained_secs: 10,
+            sustained_min_bytes: 8 * 1024 * 1024,
+            sustained_recovery_secs: 30,
+            main_dc_priority: false,
+            bulk_enter_bytes: 256 * 1024,
+            bulk_exit_bytes: 64 * 1024,
+            max_ips: 32_768,
         }
     }
 }
@@ -36,24 +64,85 @@ impl Default for ShapingConfig {
 impl ShapingConfig {
     /// Effective bulk ceiling under contention, bounded by the guaranteed priority share.
     pub(crate) fn contended_bulk_bps(&self, upload: bool) -> u64 {
-        let (capacity, configured) = if upload { (self.up_bps, self.bulk_up_bps) } else { (self.down_bps, self.bulk_down_bps) };
-        let remainder = capacity.saturating_mul(u64::from(100u8.saturating_sub(self.priority_percent))) / 100;
-        if configured == 0 { remainder } else { configured.min(remainder) }
+        let (capacity, configured) = if upload {
+            (self.up_bps, self.bulk_up_bps)
+        } else {
+            (self.down_bps, self.bulk_down_bps)
+        };
+        let remainder =
+            capacity.saturating_mul(u64::from(100u8.saturating_sub(self.priority_percent))) / 100;
+        if configured == 0 {
+            remainder
+        } else {
+            configured.min(remainder)
+        }
+    }
+    /// Idle bulk borrowing never exceeds the configured directional channel.
+    pub(crate) fn idle_bulk_bps(&self, upload: bool) -> u64 {
+        let (capacity, configured) = if upload {
+            (self.up_bps, self.bulk_idle_up_bps)
+        } else {
+            (self.down_bps, self.bulk_idle_down_bps)
+        };
+        if configured == 0 {
+            capacity
+        } else {
+            configured.min(capacity)
+        }
     }
     /// Rejects unsupported precision, unbounded state and contradictory thresholds.
     pub fn validate(&self) -> Result<(), String> {
-        if self.enabled && (!(400..=MAX_RATE_LIMIT_BPS).contains(&self.up_bps)
-            || !(400..=MAX_RATE_LIMIT_BPS).contains(&self.down_bps)) {
-            return Err("shaping capacities must be within [400, 100000000000] bps when enabled".into());
+        if self.enabled
+            && (!(400..=MAX_RATE_LIMIT_BPS).contains(&self.up_bps)
+                || !(400..=MAX_RATE_LIMIT_BPS).contains(&self.down_bps))
+        {
+            return Err(
+                "shaping capacities must be within [400, 100000000000] bps when enabled".into(),
+            );
         }
-        for (bulk, capacity) in [(self.bulk_up_bps, self.up_bps), (self.bulk_down_bps, self.down_bps)] {
+        for (bulk, capacity) in [
+            (self.bulk_up_bps, self.up_bps),
+            (self.bulk_down_bps, self.down_bps),
+        ] {
             if bulk != 0 && (!(400..=MAX_RATE_LIMIT_BPS).contains(&bulk) || bulk > capacity) {
-                return Err("shaping bulk caps must be zero or within [400, directional capacity] bps".into());
+                return Err(
+                    "shaping bulk caps must be zero or within [400, directional capacity] bps"
+                        .into(),
+                );
             }
         }
-        if !(1..=99).contains(&self.priority_percent) || !(1..=131_072).contains(&self.max_ips)
-            || self.bulk_exit_bytes == 0 || self.bulk_exit_bytes >= self.bulk_enter_bytes
-            || self.bulk_enter_bytes > 1024 * 1024 * 1024 {
+        for upload in [true, false] {
+            let idle = if upload {
+                self.bulk_idle_up_bps
+            } else {
+                self.bulk_idle_down_bps
+            };
+            let capacity = if upload { self.up_bps } else { self.down_bps };
+            if idle != 0
+                && (!(400..=MAX_RATE_LIMIT_BPS).contains(&idle)
+                    || idle > capacity
+                    || idle < self.contended_bulk_bps(upload))
+            {
+                return Err("idle bulk ceilings must be between the effective contended bulk ceiling and channel capacity".into());
+            }
+        }
+        if self.sustained_secs > 60
+            || !(1..=60).contains(&self.sustained_recovery_secs)
+            || !(400..=MAX_RATE_LIMIT_BPS).contains(&self.sustained_rate_bps)
+            || !(1..=1024 * 1024 * 1024).contains(&self.sustained_min_bytes)
+            || (self.main_dc_priority && self.sustained_secs == 0)
+        {
+            return Err(
+                "invalid sustained IP policy; DC priority requires enabled sustained detection"
+                    .into(),
+            );
+        }
+        if !(1..=99).contains(&self.priority_percent)
+            || !(1..=131_072).contains(&self.max_ips)
+            || self.bulk_exit_bytes == 0
+            || self.bulk_exit_bytes >= self.bulk_enter_bytes
+            || self.bulk_enter_bytes > 1024 * 1024 * 1024
+        {
             return Err("invalid shaping priority, table bound or bulk thresholds".into());
         }
         Ok(())
