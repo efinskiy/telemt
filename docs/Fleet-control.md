@@ -22,7 +22,7 @@ recovery requires the matching database and vault key.
 | --- | --- |
 | `POST /api/login`, `GET /api/session`, `POST /api/logout` | Password/TOTP login, session recovery and revocation |
 | `/api/administrators` | Owner enrollment and role/enable changes; last owner protected |
-| `/api/nodes` | Owner enroll/edit/delete; private literal API URL; encrypted individual token/test key |
+| `/api/nodes` | Owner enroll/edit/delete; HTTP/HTTPS API origin using public/private IPv4, IPv6 or DNS; encrypted individual token/test key |
 | `GET /api/nodes/{id}/read?path=...` | Explicit allowlisted Telemt GET, including its revision |
 | `GET /api/nodes/{id}/history` | Up to 1,440 newest minute averages within 30 days |
 | `/api/operations` | Durable multi-node mutation intent with a revision per node |

@@ -7,6 +7,7 @@ use tower::ServiceExt;
 use uuid::Uuid;
 use std::collections::HashMap;
 mod rotation_cases;
+mod node_api_urls;
 
 #[derive(Clone)]struct Mock {config:Arc<std::sync::Mutex<Value>>,revision:Arc<std::sync::Mutex<String>>,records:Arc<std::sync::Mutex<HashMap<String,Value>>>,fail_patch:Arc<std::sync::atomic::AtomicBool>,stall_patch:Arc<std::sync::atomic::AtomicBool>,patch_started:Arc<tokio::sync::Notify>,user_ready:Arc<std::sync::atomic::AtomicBool>}
 async fn node(ExtractState(mock):ExtractState<Mock>,headers:HeaderMap,req:axum::extract::Request)->(StatusCode,Json<Value>) {
@@ -73,6 +74,7 @@ async fn postgres_router_auth_operations_probes_and_dns() {
     assert_eq!(request(&app,"/api/nodes","GET",json!({}),None,false).await.0,StatusCode::UNAUTHORIZED);
     assert_eq!(request(&app,"/api/nodes","POST",json!({}),Some(&owner),false).await.0,StatusCode::FORBIDDEN);
     assert_eq!(request(&app,"/api/nodes","POST",json!({}),Some(&viewer),true).await.0,StatusCode::FORBIDDEN);
+    node_api_urls::run(&state,&app,&owner,&viewer,port).await;
     let secret="0123456789abcdef0123456789abcdef";
     let mut nodes=Vec::new();
     for (name,ip) in [("primary","192.0.2.1"),("reserve","192.0.2.2")] {

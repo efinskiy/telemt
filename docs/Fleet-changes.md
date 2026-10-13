@@ -48,6 +48,9 @@ Return bounded structured API errors without exposing secret details.
 `admin/backend/src/integration_tests.rs`
 Exercise the actual router and PostgreSQL against bounded local node/provider fixtures.
 
+`admin/backend/src/integration_tests/node_api_urls.rs`
+Verify owner-only public endpoint enrollment/editing, retained credentials and authenticated hostname requests.
+
 `admin/backend/src/integration_tests/rotation_cases.rs`
 Verify pool enrollment, authorization, conflicts, partial DNS repair, retirement and family filtering.
 

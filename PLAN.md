@@ -26,6 +26,13 @@ interfaces. Production servers and DNS are not modified during development.
 - [x] Test low-capacity priority, partial I/O, cancellation, live reload, reconnect and per-direction isolation.
 - [x] Use read-only subagent reviews and address reported shaping and rotation defects.
 
+## Public management endpoints
+
+- [x] Allow owner-enrolled public/private IP and DNS HTTP/HTTPS origins without requiring VPN.
+- [x] Preserve endpoint validation, encrypted tokens, TLS verification and redirect refusal.
+- [x] Update node enrollment UI and deployment/API documentation.
+- [x] Verify URL boundaries, actual enrollment/editing and hostname requests, browser submission and builds.
+
 ## Verification and release gates
 
 - [x] Rust 1.88 Linux all-target checks and release build; standalone backend/agent checks.

@@ -11,8 +11,8 @@ separate from the proxy's TLS camouflage domain.
 1. Copy `.env.example` to `.env`; replace the domains and node directory. Keep the
    independently reachable probe reference outside the controller's network.
 2. Point the administration domain at the controller. Open TCP 80/443 for HTTPS
-   and certificate issuance. Establish a private VPN route to each node's API;
-   the backend accepts only literal private or loopback management addresses.
+   and certificate issuance. Ensure the controller can reach each node's API. Public/private IPv4, IPv6
+   and DNS names are accepted for HTTP/HTTPS origins; VPN is optional.
 3. Create secrets in this directory:
 
 ```sh
@@ -91,12 +91,28 @@ auth_header = "Bearer REPLACE_WITH_INDIVIDUAL_RANDOM_TOKEN"
 minimal_runtime_enabled = true
 ```
 
-Bind/whitelist values depend on the VPN. Include the controller and the node's own management address for the container liveness check. Registration stores the API token and
+Bind/whitelist values depend on the chosen network. For direct public access,
+include the controller's actual public egress IP. Include the node's own
+management address for the container liveness check. Registration stores the API token and
 test secret encrypted and does not write or replace any existing proxy keys.
 Create a dedicated test user on the node; use its 16-byte hexadecimal secret,
 actual public IPs, public port, TLS SNI and DC in the Servers enrollment form.
 The same credentials must already work on each reserve. Existing user links
 remain the operator's responsibility when preparing compatible nodes.
+
+The **Control API URL** field accepts, for example, `http://203.0.113.10:9091/`,
+`https://node-api.example.org:9443/` or `https://[2001:db8::10]:9443/`.
+The URL must be an origin: no credentials, non-root path, query or fragment.
+HTTP and HTTPS are both supported. Use HTTPS for public management so tokens
+and user secrets are encrypted in transit. Telemt's native Control API serves
+HTTP; expose HTTPS through a TLS reverse proxy with a trusted certificate.
+Fleet verifies certificates and does not follow redirects.
+
+When a TLS reverse proxy runs on the node, bind the native API to loopback and
+whitelist that proxy's loopback address (also used by the local healthcheck).
+Restrict the public reverse-proxy endpoint to Fleet's egress IP at the proxy or
+firewall. The native API checks the actual TCP peer, not `X-Forwarded-For`.
+The API token remains required and is forwarded by the reverse proxy.
 
 Enable shaping through the validated configuration API after measuring usable
 channel capacities. These are bits per second, not bytes per second:
@@ -185,7 +201,7 @@ restore its matching config first.
 | Symptom | First cause to check |
 | --- | --- |
 | Cabinet returns 503 | PostgreSQL or key-file permission; database never falls back to memory |
-| Node row stale/unreachable | VPN routing, API token, whitelist, node restart |
+| Node row stale/unreachable | Network/DNS routing, TLS certificate, API token, whitelist, node restart |
 | Config save conflicts | `If-Match` revision changed; reread and compare before resubmitting |
 | Operation unknown/not sent | Lost response or controller restart; read back, do not repeat blindly |
 | New clients rejected | IP/flow admission capacity, existing static limits |

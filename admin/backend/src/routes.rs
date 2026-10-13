@@ -109,10 +109,20 @@ pub(crate) async fn dispatch(ExtractState(state):ExtractState<State>,Path(path):
     }
 }
 
+fn validate_node_api_url(raw:&str)->Result<()> {
+    let url=url::Url::parse(raw).map_err(|_|bad())?;
+    let destination=match url.host(){
+        Some(url::Host::Ipv4(ip))=>!ip.is_unspecified()&&!ip.is_multicast()&&!ip.is_broadcast(),
+        Some(url::Host::Ipv6(ip))=>!ip.is_unspecified()&&!ip.is_multicast(),
+        Some(url::Host::Domain(name))=>!name.is_empty(),
+        None=>false,
+    };
+    // Owners select the management network; credentials remain outside the endpoint URL.
+    if !destination||!["http","https"].contains(&url.scheme())||url.path()!="/"||url.query().is_some()||url.fragment().is_some()||!url.username().is_empty()||url.password().is_some(){return Err(bad());}Ok(())
+}
+
 async fn save_node(state:&State,user:&Session,id:Option<Uuid>,body:Value)->Result<Json<Value>> {
-    let name=bounded_name(&body,"name")?;let raw=field(&body,"api_url")?;let url=url::Url::parse(raw).map_err(|_|bad())?;
-    let private=match url.host(){Some(url::Host::Ipv4(ip))=>ip.is_private()||ip.is_loopback(),Some(url::Host::Ipv6(ip))=>ip.is_loopback()||(ip.segments()[0]&0xfe00)==0xfc00,_=>false};
-    if !private||!["http","https"].contains(&url.scheme())||url.path()!="/"||url.query().is_some()||url.fragment().is_some()||!url.username().is_empty()||url.password().is_some(){return Err(bad());}
+    let name=bounded_name(&body,"name")?;let raw=field(&body,"api_url")?;validate_node_api_url(raw)?;
     let port=body.get("port").and_then(Value::as_u64).ok_or_else(bad)?;if !(1..=65535).contains(&port){return Err(bad());}
     let sni=bounded_name(&body,"sni")?;if !sni.bytes().all(|c|c.is_ascii_alphanumeric()||b".-".contains(&c)){return Err(bad());}
     for key in ["ipv4","ipv6"] {if let Some(value)=body.get(key).and_then(Value::as_str).filter(|s|!s.is_empty()){let ip:std::net::IpAddr=value.parse().map_err(|_|bad())?;if ip.is_ipv4()!=(key=="ipv4")||ip.is_unspecified()||ip.is_multicast(){return Err(bad());}}}
@@ -131,3 +141,23 @@ async fn save_node(state:&State,user:&Session,id:Option<Uuid>,body:Value)->Resul
 
 #[cfg(test)]
 mod tests {use super::*;#[test]fn node_proxy_does_not_accept_arbitrary_targets(){assert!(!control_path("https://evil.invalid","POST"));assert!(!control_path("/v1/users/a/../../config","PATCH"));assert!(!control_path("/v1/config","DELETE"));assert!(control_path("/v1/users/a/disable","POST"));} #[test]fn roles_are_server_enforced(){let user=Session{id:Uuid::nil(),username:"x".into(),role:"viewer".into()};assert!(user.require("operator").is_err());assert!(user.require("owner").is_err());}}
+
+
+#[cfg(test)]
+mod node_api_url_tests {
+    use super::validate_node_api_url;
+
+    #[test]
+    fn accepts_public_private_and_domain_management_origins() {
+        for origin in ["http://203.0.113.10:9091/","https://198.51.100.20:9443/","https://[2001:db8::10]:9443/","http://node.example.org:9091/","https://node.example.org","http://10.70.0.2:9091/","http://127.0.0.1:9091/","http://[::1]:9091/","https://[fd00::2]/"] {
+            assert!(validate_node_api_url(origin).is_ok(),"{origin}");
+        }
+    }
+
+    #[test]
+    fn rejects_non_origin_urls_and_non_destination_addresses() {
+        for origin in ["file:///etc/passwd","ftp://node.example.org/","//node.example.org/","https://","https://user:password@node.example.org/","https://node.example.org/v1/config","https://node.example.org/?token=x","https://node.example.org/#fragment","http://0.0.0.0/","http://[::]/","http://224.0.0.1/","http://[ff02::1]/"] {
+            assert!(validate_node_api_url(origin).is_err(),"{origin}");
+        }
+    }
+}

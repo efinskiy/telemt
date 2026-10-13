@@ -128,3 +128,15 @@ test('bulk caps are independently configurable with the displayed revision', asy
   expect(body.body.shaping.bulk_up_bps).toBe(10000000);
   expect(body.body.shaping.bulk_down_bps).toBe(20000000);
 });
+
+test('owner can submit a public hostname as the Control API URL', async ({ page }) => {
+  await fixture(page, 'owner');
+  await page.getByRole('navigation').getByRole('button', { name: 'Servers', exact: true }).click();
+  await page.getByRole('button', { name: 'Add server', exact: true }).click();
+  await page.getByLabel('Server name', { exact: true }).fill('Public node');
+  await page.getByLabel('Control API URL', { exact: true }).fill('https://node-api.example.org:9443/');
+  await page.getByLabel('FakeTLS domain (SNI)', { exact: true }).fill('example.org');
+  const sent = page.waitForRequest(request => request.url().endsWith('/api/nodes') && request.method() === 'POST');
+  await page.getByRole('dialog').getByRole('button', { name: 'Save', exact: true }).click();
+  expect((await sent).postDataJSON().api_url).toBe('https://node-api.example.org:9443/');
+});

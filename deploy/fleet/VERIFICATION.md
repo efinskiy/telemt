@@ -101,3 +101,18 @@ workflow contain those setup steps.
   requires explicit preparation before reuse; exhausted pools stop with a reason.
 - Follow the staged rollout in `README.md`: one node with shaping/automation off,
   then shaping, then reserves/probes, then DNS automation.
+
+
+## Public management endpoint update
+
+The VPN/private-literal restriction was removed after the initial implementation.
+Owner enrollment/editing now accepts public/private IPv4, IPv6 and DNS names for
+HTTP/HTTPS API origins. TLS verification, redirect refusal, token encryption and
+role checks are unchanged. The added acceptance test first failed against the
+private-only validator and passed after the change.
+
+Validation: Rust 1.88 backend tests **15 passed**, including actual PostgreSQL
+registration/editing and an authenticated hostname request resolved to the local
+fixture; strict all-target Clippy passed; Linux all-target cross-check passed;
+frontend production build/type checking passed; browser suite **9 passed**.
+No real node endpoint or deployment was changed.
