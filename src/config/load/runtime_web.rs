@@ -115,6 +115,21 @@ pub(super) fn rebuild(config: &mut ProxyConfig) -> Result<()> {
             profiles.push(Arc::clone(&runtime_profile));
             runtime_profiles.push(runtime_profile);
         }
+        let endpoint_profiles = vhost
+            .public_addrs
+            .iter()
+            .map(|address| {
+                let variants = profiles
+                    .iter()
+                    .map(|profile| {
+                        let mut variant = (**profile).clone();
+                        variant.public_addr = *address;
+                        Arc::new(variant)
+                    })
+                    .collect();
+                (*address, variants)
+            })
+            .collect();
         runtime_vhosts.insert(
             vhost.host.clone(),
             Arc::new(WebRuntimeVhost {
@@ -128,6 +143,7 @@ pub(super) fn rebuild(config: &mut ProxyConfig) -> Result<()> {
                 decoy,
                 decoy_header_secs: config.web.timeouts.decoy_header_secs,
                 profiles,
+                endpoint_profiles,
                 capabilities: capability_table.into_boxed_slice(),
             }),
         );

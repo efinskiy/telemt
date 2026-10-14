@@ -32,7 +32,12 @@ pub(crate) async fn ready(client:&reqwest::Client,bundle:&Bundle)->anyhow::Resul
     let result=request(client,bundle,&command).await?;ensure!(result.status==200,"telemt not ready");Ok(())
 }
 pub(crate) async fn public_tls(bundle:&Bundle)->anyhow::Result<()> {
-    let ip=bundle.public_ip.parse().context("invalid public IP")?;
+    ensure!(!bundle.public_ips.is_empty()&&bundle.public_ips.len()<=8&&bundle.public_ips.contains(&bundle.public_ip),"invalid endpoint set");
+    for ip in &bundle.public_ips { public_endpoint(bundle,ip).await?; }
+    Ok(())
+}
+async fn public_endpoint(bundle:&Bundle,ip:&str)->anyhow::Result<()> {
+    let ip=ip.parse().context("invalid public IP")?;
     let mut builder=reqwest::Client::builder().no_proxy().redirect(reqwest::redirect::Policy::none()).timeout(std::time::Duration::from_secs(5)).tls_info(true).resolve(&bundle.domain,std::net::SocketAddr::new(ip,443));
     if let Ok(path)=std::env::var("MANAGED_CA_FILE"){builder=builder.add_root_certificate(reqwest::Certificate::from_pem(&crate::storage::read(std::path::Path::new(&path),128*1024).await?)?);}
     let reply=builder.build()?.get(format!("https://{}/",bundle.domain)).send().await?;

@@ -246,3 +246,38 @@ fn single_header<B>(request: &Request<B>, name: impl header::AsHeaderName) -> Op
 #[cfg(test)]
 #[path = "request/tests.rs"]
 mod tests;
+
+/// Only configured ingress peers may select a precomputed exact destination tuple.
+/// The token freezes this tuple for the session; later carrier requests cannot change it.
+pub(super) fn endpoint_profile<B>(
+    request: &hyper::Request<B>,
+    peer: std::net::SocketAddr,
+    trusted: &[ipnetwork::IpNetwork],
+    vhost: &crate::config::WebRuntimeVhost,
+    profile: std::sync::Arc<crate::config::WebRuntimeProfile>,
+) -> Option<std::sync::Arc<crate::config::WebRuntimeProfile>> {
+    if vhost.endpoint_profiles.is_empty() {
+        return Some(profile);
+    }
+    if !trusted.iter().any(|network| network.contains(peer.ip())) {
+        return None;
+    }
+    let mut headers = request.headers().get_all("x-telemt-public-address").iter();
+    let address = headers
+        .next()?
+        .to_str()
+        .ok()?
+        .parse::<std::net::SocketAddr>()
+        .ok()?;
+    if headers.next().is_some() {
+        return None;
+    }
+    vhost
+        .endpoint_profiles
+        .get(&address)?
+        .iter()
+        .find(|candidate| {
+            candidate.user == profile.user && candidate.secret_mode == profile.secret_mode
+        })
+        .cloned()
+}

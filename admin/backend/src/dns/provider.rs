@@ -25,6 +25,7 @@ pub(crate) async fn read_records(state:&State,document:&Value,token:&str)->anyho
 
 pub(super) async fn eligible(state:&State,group:&sqlx::postgres::PgRow,target:Uuid)->Result<Value> {
     if !crate::managed::admission::ready(state,target).await? {return Err(ApiError(StatusCode::CONFLICT,"managed_node_not_ready"));}
+    crate::rotation::selection::same_profile(state,group,target).await?;
     let document:Value=group.get("document");let nodes=document["node_ids"].as_array().ok_or_else(bad)?;
     if !nodes.iter().any(|id|id.as_str()==Some(target.to_string().as_str())){return Err(bad());}
     let candidate=node(state,target).await?;
@@ -36,11 +37,9 @@ pub(super) async fn eligible(state:&State,group:&sqlx::postgres::PgRow,target:Uu
         return Err(ApiError(axum::http::StatusCode::CONFLICT,"incompatible_or_unready_reserve"));
     }
     let mut intent=json!({});
-    for (key,family,version,address) in [("record_a_id","A",4,"ipv4"),("record_aaaa_id","AAAA",6,"ipv6")] {
+    for (key,family,version) in [("record_a_id","A",4),("record_aaaa_id","AAAA",6)] {
         if document[key].as_str().is_none_or(|s|s.is_empty()){continue;}
-        let health=probes::health(state,target,version).await?;
-        if !matches!(health,Health::Healthy|Health::Recovered){return Err(ApiError(axum::http::StatusCode::CONFLICT,"reserve_without_probe_quorum"));}
-        let ip=candidate_doc[address].as_str().ok_or_else(bad)?;
+        let ip=crate::rotation::selection::candidate(state,target,version==4).await?;
         intent[family]=json!({"id":document[key],"content":ip,"ttl":60,"proxied":false});
     }Ok(intent)
 }
@@ -69,6 +68,9 @@ pub(crate) async fn rotate_locked(state:&State,id:Uuid,node:Uuid,actor:Option<Uu
 async fn write_owned(state:&State,id:Uuid,target:Uuid,actor:Option<Uuid>,rotation:Option<(Uuid,Value)>)->Result<()> {
     if rotation.is_none() { guard_pool(state,id).await?; }
     let group=load(state,id).await?;
+    if rotation.is_none() && let Some(active)=group.get::<Option<Uuid>,_>("active_node") && active!=target && !crate::rotation::selection::exhausted(state,active).await? {
+        return Err(ApiError(StatusCode::CONFLICT,"current_node_addresses_not_exhausted"));
+    }
     if rotation.is_none() && actor.is_none() && !group.get::<bool,_>("automatic") { return Err(ApiError(axum::http::StatusCode::CONFLICT,"dns_automation_disabled")); }
     if fresh(group.get("last_switch"),300)||record_cooldown(state,&group.get::<Value,_>("document")).await?{return Err(ApiError(axum::http::StatusCode::CONFLICT,"dns_cooldown"));}
     let pending:i64=sqlx::query_scalar("SELECT count(*) FROM dns_changes WHERE group_id=$1 AND state IN ('writing','unknown')").bind(id).fetch_one(&state.db).await?;
@@ -112,6 +114,9 @@ pub(crate) fn matches_intent(actual:&Value,intent:&Value)->bool {
 async fn finish(state:&State,change:Uuid,group:Uuid,target:Uuid,actual:Value,actor:Option<Uuid>)->Result<()> {
     let mut tx=state.db.begin().await?;
     crate::rotation::finish_dns(&mut tx,change).await?;
+    for (family,key) in [("A","ipv4"),("AAAA","ipv6")] {if let Some(ip)=actual[family]["content"].as_str(){
+        sqlx::query("UPDATE nodes SET document=jsonb_set(document,$2,$3) WHERE id=$1").bind(target).bind(vec![key]).bind(json!(ip)).execute(&mut *tx).await?;
+    }}
     sqlx::query("UPDATE dns_changes SET state='verified',result=$2 WHERE id=$1").bind(change).bind(&actual).execute(&mut *tx).await?;
     sqlx::query("UPDATE failover_groups SET active_node=$2,observed=$3,last_switch=now(),status='healthy',updated_at=now() WHERE id=$1").bind(group).bind(target).bind(actual).execute(&mut *tx).await?;
     let document:Value=sqlx::query_scalar("SELECT document FROM failover_groups WHERE id=$1").bind(group).fetch_one(&mut *tx).await?;
@@ -160,8 +165,8 @@ pub(super) async fn repair(state:&State,id:Uuid,target:Uuid,expected:&Value,acto
 
 
 async fn guard_pool(state:&State,id:Uuid)->Result<()> {
-    let owned:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM ip_pools WHERE group_id=$1)").bind(id).fetch_one(&state.db).await?;
-    if owned{return Err(ApiError(axum::http::StatusCode::CONFLICT,"use_ip_pool_rotation_and_repair"));}Ok(())
+    let owned:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM ip_pools p JOIN ip_rotations r ON r.pool_id=p.id WHERE p.group_id=$1 AND r.state IN('queued','dns_pending','unknown'))").bind(id).fetch_one(&state.db).await?;
+    if owned{return Err(ApiError(axum::http::StatusCode::CONFLICT,"ip_rotation_pending_requires_reconciliation"));}Ok(())
 }
 
 #[cfg(test)]mod tests{use super::*;#[test]fn partial_dns_write_does_not_verify(){let intent=json!({"A":{"id":"a","content":"192.0.2.2"},"AAAA":{"id":"b","content":"2001:db8::2"}});let actual=json!({"A":{"id":"a","content":"192.0.2.2","ttl":60},"AAAA":{"id":"b","content":"2001:db8::1","ttl":60}});assert!(!matches_intent(&actual,&intent));assert!(!matches_intent(&json!({}),&json!({})));}}

@@ -5,8 +5,8 @@ export const percent = (v: Json | undefined) => value(v) === null ? 'Нет да
 export const capacity = (v: Json | undefined) => value(v) === null ? 'Нет данных' : `${(Number(v) / 1e6).toLocaleString('ru-RU', { maximumFractionDigits: 1 })} Мбит/с`;
 export function volume(v: Json | undefined) {
   const n = value(v); if (n === null) return 'Нет данных';
-  const i = n >= 1024 ** 3 ? 3 : n >= 1024 ** 2 ? 2 : n >= 1024 ? 1 : 0;
-  return `${(n / 1024 ** i).toLocaleString('ru-RU', { maximumFractionDigits: 1 })} ${['Б', 'КиБ', 'МиБ', 'ГиБ'][i]}`;
+  const i = n >= 1024 ** 5 ? 5 : n >= 1024 ** 4 ? 4 : n >= 1024 ** 3 ? 3 : n >= 1024 ** 2 ? 2 : n >= 1024 ? 1 : 0;
+  return `${(n / 1024 ** i).toLocaleString('ru-RU', { maximumFractionDigits: 1 })} ${['Б', 'КиБ', 'МиБ', 'ГиБ', 'ТиБ', 'ПиБ'][i]}`;
 }
 export function duration(v: Json | undefined) {
   const n = value(v); if (n === null) return 'Нет данных';

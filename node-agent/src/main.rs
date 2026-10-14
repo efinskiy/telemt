@@ -23,7 +23,13 @@ async fn main()->anyhow::Result<()> {
         local::ready(&client,&bundle).await?;local::public_tls(&bundle).await?;return Ok(());
     }
     let mut services=process::Services::new();
-    if let Some(bundle)=storage::load::<Bundle>("active.json").await? && services.activate(bundle.clone(),&client).await.is_err(){
+    let cached=storage::load::<Value>("active.json").await?;
+    let bundle=match cached {
+        Some(value) if value.get("public_ips").is_none()=>{eprintln!("cached deployment format retired; fetching current managed deployment");None},
+        Some(value)=>Some(serde_json::from_value::<Bundle>(value)?),
+        None=>None,
+    };
+    if let Some(bundle)=bundle && services.activate(bundle.clone(),&client).await.is_err(){
         // Retain the committed recovery candidate even when Fleet is also unreachable.
         services.bundle=Some(bundle);eprintln!("last configuration unavailable; retrying committed deployment");}
     let result=run(&mut services,&client).await;services.stop().await;result

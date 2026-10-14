@@ -211,3 +211,30 @@ Verification evidence (local, 2026-10-14):
 Reference: https://github.com/remnawave/frontend (theme and dashboard layout inspected; no source or assets copied).
 
 Verification: production build/typecheck and 27 existing unit checks passed. Eleven focused Chromium scenarios passed; after final layout refinements, four affected scenarios passed again, including all 14 pages, scoped controls, theme/sidebar persistence, mobile forms and detailed server metrics. Desktop light/dark and 390 px mobile screenshots were inspected. No new test suite, dependencies, backend changes or production deployment.
+
+## Managed-only Fleet and cascading node removal
+
+- [x] Remove all node dependencies atomically, retaining shared profiles/certificates and pausing affected DNS groups.
+- [x] Fence group enrollment and queued operations against deleted-node references.
+- [x] Remove direct-API registration, adoption and legacy transport/UI compatibility.
+- [x] Implement managed endpoint pools and local-IP-first, same-profile failover; document the coordinated upgrade.
+- [x] Probe native and WEB independently per IP; unknown/stale evidence blocks exhaustion.
+- [x] Preserve exact WEB destination tuples through trusted, allowlisted ingress headers.
+- [x] Validate database cascades, managed enrollment, production builds and essential frontend scenarios.
+
+Verification (local, 2026-10-14):
+- Rust 1.88: 22 backend checks passed with disposable PostgreSQL and real GeoIP data, including cascading deletion, revoked polling credentials, same-profile recovery after active-node deletion, local-first rotation, unknown endpoint evidence, and simulated Cloudflare reconciliation.
+- Linux core: 16 endpoint-filtered checks and 284 WEB checks passed, including trusted ingress selection and endpoint identity across reload. Six probe checks passed; two live Telegram checks remained opt-in. Fleet, supervisor and probe all-target Clippy passed with warnings denied; root formatting check passed.
+- Production Fleet and managed-node Linux images built from the changed code. Core release compilation retains 44 existing warnings; unrelated warnings were not changed. Concurrent release-test linking exhausted local Docker resources, so it was stopped; ordinary Linux tests with two jobs and disabled test debug information passed.
+- Frontend production build/typecheck and 27 unit checks passed. All 27 browser scenarios passed during implementation; ten affected scenarios and then three final enrollment/deletion/DNS scenarios passed after subsequent changes.
+- Real Compose lifecycle passed: two-node enrollment; assigned-interface pool with HTTPS and WEB sessions on both IPs; certificate replacement without telemt restart; user rollout and rollback retaining pool listeners and links; drift repair; offline node restart. The first endpoint smoke run used invalid carrier/body headers and failed; the corrected protocol-conforming harness passed. Native listeners were checked locally; real Telegram nonce exchange was not rerun for this change.
+- This section supersedes the earlier limitation restricting IP pools to direct registrations. New migrations retire direct registrations, remove their API URL/legacy rotation fields, invalidate old probe evidence and require coordinated Fleet/node/probe upgrades. Shared profiles, certificates and audit records survive node deletion. Production DNS and servers were not modified; no commit or push was performed.
+
+## Fleet server rows and connection/traffic summary
+
+- [x] Expose admission-based active IP counts through existing traffic snapshots, independent of user telemetry.
+- [x] Replace the Servers table with resource/traffic/status rows while preserving owner actions.
+- [x] Add Overview connection, directional traffic and resource summaries with explicit freshness and coverage.
+- [x] Verify production frontend build and one focused desktop/mobile browser scenario; compile-check the small node API change without Rust tests.
+
+Verification: production frontend build/typecheck passed. One focused Chromium scenario passed (4.1 seconds including build), covering both pages at desktop and 390 px, directional totals, live IP/account/connection distinctions, stale data and viewer permissions. Desktop/mobile screenshots inspected. Linux Rust 1.88 `cargo check --locked --offline -j 2` passed in 52 seconds with the same 44 pre-existing warnings; no Rust tests or full frontend suite were run. The sandbox prevented the initial Chrome launch; the same single scenario passed with browser execution permitted. No production deployment or Git push.

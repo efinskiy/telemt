@@ -9,6 +9,7 @@ mod monitor;
 mod operations;
 mod probes;
 mod routes;
+mod node_lifecycle;
 mod rotation;
 mod profiles;
 mod certificates;

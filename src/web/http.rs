@@ -288,6 +288,12 @@ async fn handle_root(
         }
         return serve_decoy(request, vhost, recovery_requested, &runtime).await;
     };
+    let Some(profile) =
+        request::endpoint_profile(&request, peer, trusted_proxy_cidrs, &vhost, profile)
+    else {
+        strip_query(&mut request);
+        return serve_decoy(request, vhost, true, &runtime).await;
+    };
     let Some(client_ip) = client_ip(&request, peer, client_ip_source, trusted_proxy_cidrs) else {
         strip_query(&mut request);
         return serve_decoy(request, vhost, true, &runtime).await;

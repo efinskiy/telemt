@@ -3,6 +3,7 @@ import { type Node, type Json, object, list, text } from './api';
 import { alerts, bulkLimit, capacity, count, dcRows, dcFresh, duration, fresh, percent, ratio, sum, used, value, volume } from './overview-model';
 import { OverviewClients } from './overview-clients';
 import { date } from './labels';
+import { ipCount } from './fleet-summary';
 import './overview-servers.css';
 
 function Fact({ label, children }: { label: string; children: ReactNode }) { return <div className="server-fact"><dt>{label}</dt><dd>{children}</dd></div>; }
@@ -22,8 +23,8 @@ function ServerCard({ node, now, expanded, expand, inspect }: { node: Node; now:
     <header className="server-summary-header"><div><h3>{node.name}</h3><code>{addresses || 'Публичный IP не указан'}</code></div><div className="server-signals"><Signal name="API" state={recent && typeof snapshot.management === 'string' ? snapshot.management === 'reachable' : null} /><Signal name="Приём" state={available && typeof snapshot.ready === 'boolean' ? snapshot.ready : null} /><Signal name="ME" state={dcRecent && dc.middle_proxy_enabled === true && dcs.length && dcs.every(row => value(row.available_pct) !== null) ? dcs.every(row => row.available_pct === 100) : null} /></div></header>
     <div className="server-snapshot"><span className={!recent ? 'stale' : 'muted'}>{!node.enabled ? 'Мониторинг отключён' : !recent ? 'Данные устарели' : 'Свежее измерение'} · {duration(age)} назад</span><button className="quiet" onClick={inspect}>Карта и графики</button></div>
     <div className="server-block"><h4>Трафик и подключения <small>Направления относительно клиента</small></h4><dl className="server-facts">
-      <Fact label="Аккаунты онлайн">{count(traffic.active_users)}</Fact><Fact label="Соединения">{count(traffic.current_connections)}</Fact>
-      <Fact label="Трафик за период счётчика">{traffic.available === true ? volume(sum(traffic.octets_from_client, traffic.octets_to_client)) : 'Нет данных'}</Fact><Fact label="Скорость ↑ + ↓">{capacity(sum(snapshot.upload_bps, snapshot.download_bps))}</Fact>
+      <Fact label="IP-клиенты онлайн">{available ? ipCount(node) : 'Нет данных'}</Fact><Fact label="Аккаунты онлайн">{count(traffic.active_users)}</Fact><Fact label="Соединения">{count(traffic.current_connections)}</Fact>
+      <Fact label="Трафик за период счётчика">{traffic.available === true ? volume(sum(traffic.octets_from_client, traffic.octets_to_client)) : 'Нет данных'}</Fact><Fact label="Трафик Upload ↑">{traffic.available === true ? volume(traffic.octets_from_client) : 'Нет данных'}</Fact><Fact label="Трафик Download ↓">{traffic.available === true ? volume(traffic.octets_to_client) : 'Нет данных'}</Fact><Fact label="Скорость ↑ + ↓">{capacity(sum(snapshot.upload_bps, snapshot.download_bps))}</Fact>
       <Fact label="От клиента ↑">{capacity(snapshot.upload_bps)}</Fact><Fact label="К клиенту ↓">{capacity(snapshot.download_bps)}</Fact>
       <Fact label="Канал шейпера ↑">{capacity(policy.up_bps)}</Fact><Fact label="Канал шейпера ↓">{capacity(policy.down_bps)}</Fact>
     </dl><small className="muted">Аккаунт может обслуживать нескольких людей. Ёмкость канала задана в политике, а не измерена тестом скорости.</small>

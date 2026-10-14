@@ -26,12 +26,14 @@ pub(crate) struct WebRuntimeVhost {
     pub(crate) decoy_header_secs: u64,
     /// Exact capability profiles accepted by this host.
     pub(crate) profiles: Vec<Arc<WebRuntimeProfile>>,
+    /// Precomputed endpoint variants retain the same credential quota owner.
+    pub(crate) endpoint_profiles: BTreeMap<SocketAddr, Vec<Arc<WebRuntimeProfile>>>,
     /// Contiguous capability table aligned one-to-one with `profiles`.
     pub(crate) capabilities: Box<[[u8; 32]]>,
 }
 
 /// Precomputed exact-user capability entry.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) struct WebRuntimeProfile {
     /// Canonical host that owns this profile.
     pub(crate) host: String,

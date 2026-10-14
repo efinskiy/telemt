@@ -4,10 +4,10 @@ use serde_json::{Value,json};
 use sqlx::Row;
 use uuid::Uuid;
 
-/// Direct nodes retain their existing admission policy; managed nodes must acknowledge the desired bundle.
+/// Only enrolled nodes acknowledging their desired bundle may enter DNS.
 pub(crate) async fn ready(state:&State,id:Uuid)->anyhow::Result<bool>{
     let row=sqlx::query("SELECT m.revoked,m.status,m.desired_revision,m.applied_revision,m.last_seen,m.report,c.info FROM managed_nodes m JOIN profiles p ON p.id=m.profile_id JOIN certificates c ON c.id=p.certificate_id WHERE m.node_id=$1").bind(id).fetch_optional(&state.db).await?;
-    let Some(row)=row else{return Ok(true);};
+    let Some(row)=row else{return Ok(false);};
     let info:Value=row.get("info");let report:Value=row.get("report");
     Ok(!row.get::<bool,_>("revoked")&&row.get::<String,_>("status")=="applied"&&row.get::<i64,_>("desired_revision")==row.get::<i64,_>("applied_revision")&&crate::state::fresh(row.get("last_seen"),15)&&report["certificate_fingerprint"]==info["fingerprint"]&&info["not_after"].as_i64().is_some_and(|at|at>chrono::Utc::now().timestamp()+3600))
 }
@@ -19,7 +19,7 @@ pub(crate) async fn tick(state:&State)->anyhow::Result<()> {
         let mut tx=state.db.begin().await?;
         let lock:bool=sqlx::query_scalar("SELECT pg_try_advisory_xact_lock($1)").bind(crate::state::DNS_COORDINATOR_LOCK).fetch_one(&mut *tx).await?;if !lock{continue;}
         let group=sqlx::query("SELECT active_node,document,status FROM failover_groups WHERE id=$1 FOR UPDATE").bind(gid).fetch_one(&mut *tx).await?;
-        if ["external_dns_conflict","dns_outcome_unknown","dns_write_pending","configuration_drift","node_revoked"].contains(&group.get::<String,_>("status").as_str()){continue;}
+        if ["external_dns_conflict","dns_outcome_unknown","dns_write_pending","configuration_drift","node_revoked","node_removed"].contains(&group.get::<String,_>("status").as_str()){continue;}
         let Some(active)=group.get::<Option<Uuid>,_>("active_node")else{continue;};
         let active_ready=ready(state,active).await?;
         let snapshot:Value=sqlx::query_scalar("SELECT snapshot FROM nodes WHERE id=$1 AND collected_at>now()-interval '15 seconds'").bind(active).fetch_optional(&mut *tx).await?.unwrap_or(Value::Null);

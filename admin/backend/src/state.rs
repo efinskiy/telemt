@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use chrono::Utc;
 use serde_json::{Value, json};
-use sqlx::{PgPool, Row};
+use sqlx::PgPool;
 use uuid::Uuid;
 use crate::{crypto::Vault, error::{Result, bad}};
 
@@ -56,16 +56,9 @@ pub(crate) async fn node(state: &State, id: Uuid) -> Result<sqlx::postgres::PgRo
 }
 
 pub(crate) async fn node_request(state: &State, id: Uuid, method: reqwest::Method, path: &str, body: Option<&Value>, revision: Option<&str>) -> anyhow::Result<(u16, Value)> {
-    let row = sqlx::query("SELECT api_url,token_cipher FROM nodes WHERE id=$1 AND enabled").bind(id).fetch_one(&state.db).await?;
-    let url: String = row.get("api_url"); let cipher: String = row.get("token_cipher");
-    if url=="managed://local"{return crate::managed::request(state,id,method,path,body,revision).await;}
-    let token = state.vault.open(&cipher,&format!("node:{id}"))?;
-    let mut req = state.client.request(method, format!("{}{path}",url.trim_end_matches('/'))).header("Authorization",token.as_str());
-    if let Some(revision)=revision { req=req.header("If-Match",revision); }
-    if let Some(body)=body { req=req.json(body); }
-    let mut response=req.send().await?; let status=response.status().as_u16(); let mut bytes=Vec::new();
-    while let Some(chunk)=response.chunk().await? { anyhow::ensure!(bytes.len()+chunk.len()<=2*1024*1024,"node response too large"); bytes.extend_from_slice(&chunk); }
-    Ok((status,serde_json::from_slice(&bytes)?))
+    let enabled:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM nodes n JOIN managed_nodes m ON m.node_id=n.id WHERE n.id=$1 AND n.enabled AND NOT m.revoked)").bind(id).fetch_one(&state.db).await?;
+    anyhow::ensure!(enabled,"managed node unavailable");
+    crate::managed::request(state,id,method,path,body,revision).await
 }
 
 pub(crate) fn fresh(at: Option<chrono::DateTime<Utc>>, seconds: i64) -> bool { at.is_some_and(|at| Utc::now().signed_duration_since(at).num_seconds() <= seconds) }

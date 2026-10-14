@@ -63,6 +63,7 @@ async fn every_authentic_credential_placement_stays_out_of_the_upstream() {
     vhosts.insert(
         "proxy.example.com".to_string(),
         Arc::new(WebRuntimeVhost {
+            endpoint_profiles: Default::default(),
             host: "proxy.example.com".to_string(),
             base: "/relay/".to_string(),
             decoy_fasttrack_mode: WebDecoyFastTrackMode::Off,
@@ -78,6 +79,7 @@ async fn every_authentic_credential_placement_stays_out_of_the_upstream() {
     vhosts.insert(
         "other.example.com".to_string(),
         Arc::new(WebRuntimeVhost {
+            endpoint_profiles: Default::default(),
             host: "other.example.com".to_string(),
             base: "/other/".to_string(),
             decoy_fasttrack_mode: WebDecoyFastTrackMode::Off,

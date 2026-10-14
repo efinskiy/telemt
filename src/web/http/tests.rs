@@ -21,6 +21,9 @@ use crate::web::manager::{
     SessionRefError, WebProcessRuntime,
 };
 
+// Managed multi-endpoint ingress keeps exact relay tuples behind trusted headers.
+#[path = "endpoint_tests.rs"]
+mod endpoint_tests;
 #[path = "legacy_tests.rs"]
 mod legacy_tests;
 #[path = "negotiation_tests.rs"]
@@ -156,6 +159,7 @@ fn runtime_config_with_carriers_and_deadlines(
         index: "index.html".to_string(),
     });
     let vhost = Arc::new(WebRuntimeVhost {
+        endpoint_profiles: Default::default(),
         host: "proxy.example.com".to_string(),
         base: base.to_string(),
         decoy_fasttrack_mode: WebDecoyFastTrackMode::Off,
@@ -169,6 +173,7 @@ fn runtime_config_with_carriers_and_deadlines(
     vhosts.insert(
         "other.example.com".to_string(),
         Arc::new(WebRuntimeVhost {
+            endpoint_profiles: Default::default(),
             host: "other.example.com".to_string(),
             base: "/".to_string(),
             decoy_fasttrack_mode: WebDecoyFastTrackMode::Off,

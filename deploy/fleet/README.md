@@ -110,68 +110,27 @@ PostgreSQL and the administration HTTP port are not published to the host.
 
 ## Enroll a node
 
-Deploy the modified Telemt binary or build the node profile on each node host:
+Fleet only accepts managed nodes belonging to shared profiles. Create/import a certificate,
+publish the shared profile, then open **Servers → Add server**, supply a name and assigned IP,
+and select the profile. Run the generated Compose file on that node. Follow
+[MANAGED-NODES.md](MANAGED-NODES.md) for requirements, certificate renewal and upgrades.
 
-```sh
-docker compose -f compose.yml --profile node build node
-docker compose -f compose.yml --profile node up -d --no-deps node
-```
+Nodes poll Fleet over authenticated HTTPS. Their Control API remains on loopback; no public
+management listener, API URL, VPN or manual per-node token registration is required.
+Direct registration, direct configuration/user mutations and adoption endpoints are removed.
+Retired registrations are disabled and remain visible only for explicit cascading removal.
 
-The node uses host networking and its own writable, root-owned config directory.
-Its isolated state volume holds runtime files. Do not share a state directory
-between instances. Configure API access on the private interface, for example:
+Deleting a server removes its credentials, deployments, commands, probe results, metrics,
+IP pool and node-specific DNS/operation records transactionally. Shared operations retain
+only surviving targets. Related DNS groups are paused and lose the deleted member; shared
+profiles and certificates remain. Cloudflare records and the remote container are unchanged.
+Stop/remove the remote Compose deployment separately if the host is being retired.
+If the active member was deleted, select a ready replacement of the same profile, use
+**Проверить совместимость ключей**, then preview and apply the DNS change. This also works
+after a profile update; verification reads the selected replacement without writing DNS.
+Automation remains disabled until explicitly enabled again.
 
-```toml
-[server.api]
-enabled = true
-listen = "10.70.0.2:9091"
-whitelist = ["10.70.0.1/32", "10.70.0.2/32"]
-auth_header = "Bearer REPLACE_WITH_INDIVIDUAL_RANDOM_TOKEN"
-minimal_runtime_enabled = true
-```
-
-Bind/whitelist values depend on the chosen network. For direct public access,
-include the controller's actual public egress IP. Include the node's own
-management address for the container liveness check. Registration stores the API token and
-test secret encrypted and does not write or replace any existing proxy keys.
-Create a dedicated test user on the node; use its 16-byte hexadecimal secret,
-actual public IPs, public port, TLS SNI and DC in the Servers enrollment form.
-The same credentials must already work on each reserve. Existing user links
-remain the operator's responsibility when preparing compatible nodes.
-
-The **Control API URL** field accepts, for example, `http://203.0.113.10:9091/`,
-`https://node-api.example.org:9443/` or `https://[2001:db8::10]:9443/`.
-The URL must be an origin: no credentials, non-root path, query or fragment.
-HTTP and HTTPS are both supported. Use HTTPS for public management so tokens
-and user secrets are encrypted in transit. Telemt's native Control API serves
-HTTP; expose HTTPS through a TLS reverse proxy with a trusted certificate.
-Fleet verifies certificates and does not follow redirects.
-
-When a TLS reverse proxy runs on the node, bind the native API to loopback and
-whitelist that proxy's loopback address (also used by the local healthcheck).
-Restrict the public reverse-proxy endpoint to Fleet's egress IP at the proxy or
-firewall. The native API checks the actual TCP peer, not `X-Forwarded-For`.
-The API token remains required and is forwarded by the reverse proxy.
-
-If the cabinet reports `Fleet API returned a non-JSON response`, inspect the
-failed browser request's HTTP status and content type. HTML error pages from the
-controller's reverse proxy or CDN are not node configuration responses. A node
-response that cannot be parsed by the backend normally becomes JSON HTTP 502
-with `upstream_operation_failed`; a CDN may replace that gateway response.
-When fleet lists work but node reads fail, check the node's `/v1/health` endpoint
-from the controller host, first using DNS and then using curl's `--resolve` with
-the node's actual address. Preserve TLS verification. Without an Authorization
-header, JSON HTTP 401 confirms that the API is reachable; HTML HTTP 403 usually
-indicates a reverse-proxy access rule, and timeout/refusal points to routing,
-firewall or listener availability. A successful host request does not prove the
-backend container has the same connectivity or the stored token is correct.
-
-For a node API exposed on HTTPS port 9443, keep its hostname DNS-only when using
-Cloudflare DNS: that port is outside Cloudflare's standard proxied HTTPS ports.
-The controller hostname's proxy setting is independent. Restrict the node's
-public API to the controller's actual egress address, not a Cloudflare edge IP.
-
-Enable shaping through the validated configuration API after measuring usable
+Enable shaping in the shared profile after measuring usable
 channel capacities. These are bits per second, not bytes per second:
 
 ```toml
@@ -266,66 +225,51 @@ restore its matching config first.
 | Probe network unknown | Agent host/reference failure or expired assignments |
 | Healthy reserve incompatible | User secrets/enabled state, modes, port or TLS domains differ |
 
-## Rotate assigned IPs on one server
+## Managed IP rotation and server failover
 
-The host must already own the candidate addresses on enabled interfaces, with
-routing and firewall access to the public MTProxy port. The cabinet never adds
-OS addresses or replaces a hosting provider allocation. Use the host-network
-node profile so the node API enumerates host interfaces.
+Every server may have one pool of 2–8 IPs already assigned to its interfaces. Multiple
+server pools may belong to the same DNS group; all members must share a managed profile.
+NAT addresses absent from the interface inventory are not accepted.
 
-Configure an explicit MTProxy listener on the current assigned address with
-SYN limiting off before enabling runtime rotation. The following addresses and
-domains are examples to replace in the deployment configuration:
+1. Enroll a DNS group with its current A/AAAA records and compatible managed members.
+2. Create a pool in **IP rotation**, including the node's current enrolled-family addresses.
+3. Preview and apply preparation. Fleet creates an immutable deployment with native MTProxy
+   and nginx HTTPS listeners on every selected IP. This deployment restarts telemt and closes
+   existing sessions. Wait for its actual acknowledgement and endpoint readiness.
+4. Use at least two independently registered Russian probe networks. Each address gets separate,
+   concurrent native FakeTLS/MTProto and HTTPS WEB req_pq/resPQ checks, within five seconds.
+5. Enable local IP autorotation on the pool, and optionally cross-server automation on the group.
+   Both are initially disabled and separately stoppable.
 
-```toml
-[[server.listeners]]
-ip = "192.0.2.10"
-port = 443
-transport = "mtproxy"
-synlimit = "off"
-announce = "proxy.example.org"
-```
+A failed published IP is replaced by a prepared healthy IP on the same server first. A switch
+to another server is permitted only after every IP on the current server has confirmed failure.
+Unknown/stale/region-only evidence blocks escalation. A target must belong to the same profile,
+have acknowledged its desired deployment, and have a confirmed working address for each enrolled
+record family. Three consecutive failed rounds from two independent networks confirm failure;
+two successful rounds admit a fresh reserve; a previously failed address requires six successes.
+Switches retain the five-minute cooldown. Disabling local rotation does not make a healthy or
+unknown local reserve count as failed, so it cannot force cross-server migration.
 
-A wildcard listener cannot be kept open while binding its specific reserves
-with the existing socket policy. WEB listener addresses are deployment-owned.
-Rebind requests involving SYN limiting or WEB inventory changes are rejected;
-prepare those deployment settings and restart the node first.
+DNS changes leave all prepared listeners running. This preserves recovery probes and existing
+connections; clients reconnect through DNS according to their caches. No session is transferred
+between servers and there is no automatic return to the former primary. Cert renewal and profile
+publication retain the prepared endpoint set. nginx overwrites the internal destination header;
+telemt accepts it only from trusted ingress and configured addresses, freezes the exact endpoint
+in the session, and retains shared per-user/per-IP limits.
 
-1. Enroll a DNS group pointing to the node's current IP. A group may contain one
-   node for local IP rotation. Leave fleet DNS automation off.
-2. Open **IP rotation → Create IP pool**. Select the server, its DNS group and
-   2–8 usable assigned interface addresses. Include current A/AAAA targets.
-3. Preview listener preparation, review the full array and captured revision,
-   then apply it. Watch the preparation operation until reload completes.
-4. Register at least two independent Russian probe networks. Refresh address
-   checks and wait for two successful rounds on each prepared reserve.
-5. Preview a manual IP/DNS change. Apply it and inspect rotation history through
-   DNS verification and old-listener retirement.
-6. Enable **auto rotation** last. Disable it from the same pool row whenever
-   needed. A started DNS request still needs reconciliation after disabling.
+Unknown Cloudflare writes must be reconciled before another change. Use a fresh repair preview
+for a confirmed partial write or explicit external change. Removing a pool stops managing it but
+does not immediately rewrite DNS or restart the node; the next deployment renders remaining
+configured endpoints.
 
-Preparation announces the group domain in proxy links while preserving user
-keys and listener transport policy. A switch changes one registered address
-family at a time; unknown state in another enrolled family stops automation.
-Reserve order follows pool creation order. A retired address is not automatically
-rebound or returned to service: prepare the pool again and require six healthy
-rounds before reusing a quarantined address.
-
-When a write is uncertain, use **Reconcile uncertain rotation** first. If DNS is
-verified but a revision conflict prevented old-listener retirement, preview and
-apply a fresh listener repair. For an external record conflict, read current DNS,
-acknowledge the exact displayed state, and submit a fresh manual preview. Pending
-node edits are rejected while a rotation needs reconciliation. Removing pool
-enrollment preserves the current DNS and listener configuration.
-
-| Rotation symptom | First cause to check |
+| Symptom | Check |
 | --- | --- |
-| Address missing/unusable | It is not assigned, its interface is down, or it is loopback/link-local |
-| Preparation rejected | Wildcard bind, SYN limiting, changed revision, or saved/active mismatch |
-| Reserve has no quorum | Firewall/routing, actual FakeTLS/MTProto failure, agent/reference availability |
-| Rotation remains queued | Configuration operation, compatibility drift, cooldown or changed quorum |
-| DNS changed, old listener remains | Retirement conflict/failure; preview a fresh listener repair |
-| Automation stops after editing keys | Verify the new compatibility baseline before enabling it again |
+| Address missing | Assigned interface, interface state and routability |
+| Preparation pending | Desired/applied deployment, nginx/telemt validation and bound endpoints |
+| One transport fails | Its firewall rule, port, certificate/SNI or protocol response |
+| Local reserve unknown | Both external networks and freshness of every required round |
+| Cross-server switch blocked | All current-node IPs must fail; target must share the profile |
+| DNS outcome unknown | Reconcile provider state before retrying |
 
 
 ## Tuning the contention shaper

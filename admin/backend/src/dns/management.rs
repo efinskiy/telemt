@@ -11,16 +11,19 @@ pub(super) async fn patch(state:&State,user:&Session,id:Uuid,body:Value)->Result
     if let Some(nodes)=body.get("node_ids") {
         let nodes=nodes.as_array().ok_or_else(bad)?;if !(1..=20).contains(&nodes.len()){return Err(bad());}
         let mut unique=std::collections::HashSet::new();let mut ordered=Vec::new();
-        for node in nodes {let node=parse_id(node.as_str().ok_or_else(bad)?)?;if !unique.insert(node){return Err(bad());}crate::state::node(state,node).await?;ordered.push(node);}
-        if group.get::<Option<Uuid>,_>("active_node").is_none_or(|active|!unique.contains(&active)){return Err(bad());}
+        for node in nodes {let node=parse_id(node.as_str().ok_or_else(bad)?)?;if !unique.insert(node){return Err(bad());}crate::state::node(state,node).await?;
+            let profile=parse_id(document["profile_id"].as_str().ok_or_else(bad)?)?;
+            let same:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM managed_nodes WHERE profile_id=$1 AND node_id=$2 AND NOT revoked)").bind(profile).bind(node).fetch_one(&mut *tx).await?;
+            if !same{return Err(ApiError(StatusCode::CONFLICT,"reserve_requires_same_profile"));}ordered.push(node);}
+        if group.get::<Option<Uuid>,_>("active_node").is_some_and(|active|!unique.contains(&active)){return Err(bad());}
+        let pools:Vec<Uuid>=sqlx::query_scalar("SELECT node_id FROM ip_pools WHERE group_id=$1").bind(id).fetch_all(&mut *tx).await?;
+        if pools.iter().any(|node|!unique.contains(node)){return Err(ApiError(StatusCode::CONFLICT,"remove_pool_before_group_member"));}
         document["node_ids"]=json!(ordered);changed=true;
     }
     if let Some(token)=body.get("token").and_then(Value::as_str).filter(|token|!token.is_empty()) {
         if token.len()>1024{return Err(bad());}read_records(state,&document,token).await?;
         cipher=state.vault.seal(token,&format!("dns:{id}"))?;changed=true;
     }
-    let pools:i64=sqlx::query_scalar("SELECT count(*) FROM ip_pools WHERE group_id=$1").bind(id).fetch_one(&mut *tx).await?;
-    if pools>0 && (changed||body["automatic"]==true){return Err(ApiError(axum::http::StatusCode::CONFLICT,"group_owned_by_ip_rotation_pool"));}
     let enabled=body.get("automatic").map(|value|value.as_bool().ok_or_else(bad)).transpose()?.unwrap_or(false);
     if enabled && (changed||document["configuration_verified"]!=true||["configuration_change_requires_verification","endpoint_change_requires_verification"].contains(&group.get::<String,_>("status").as_str())) {
         return Err(ApiError(axum::http::StatusCode::CONFLICT,"configuration_verification_required"));
@@ -46,12 +49,17 @@ pub(super) async fn remove(state:&State,user:&Session,id:Uuid)->Result<Json<Valu
 }
 
 /// A fresh owning-node read and the coordinator fence prevent a stale editor from clearing a pause.
-pub(super) async fn verify(state:&State,user:&Session,id:Uuid)->Result<Json<Value>> {
+pub(super) async fn verify(state:&State,user:&Session,id:Uuid,body:&Value)->Result<Json<Value>> {
     user.require("owner")?;let mut tx=state.db.begin().await?;
     sqlx::query("SELECT pg_advisory_xact_lock($1)").bind(crate::state::DNS_COORDINATOR_LOCK).execute(&mut *tx).await?;
     let pending:i64=sqlx::query_scalar("SELECT count(*) FROM operations WHERE state IN ('queued','running')").fetch_one(&mut *tx).await?;
     if pending>0{return Err(ApiError(axum::http::StatusCode::CONFLICT,"configuration_operation_pending"));}
-    let group=load(state,id).await?;let active=group.get::<Option<Uuid>,_>("active_node").ok_or_else(bad)?;
+    let group=load(state,id).await?;
+    let active=match group.get::<Option<Uuid>,_>("active_node") {Some(active)=>active,None=>parse_id(body["node_id"].as_str().ok_or(ApiError(StatusCode::CONFLICT,"select_recovery_node"))?)?};
+    crate::rotation::selection::same_profile(state,&group,active).await?;
+    if !crate::managed::admission::ready(state,active).await?{return Err(ApiError(StatusCode::CONFLICT,"managed_node_not_ready"));}
+    let (ready_status,readiness)=crate::state::node_request(state,active,reqwest::Method::GET,"/v1/health/ready",None,None).await?;
+    if ready_status!=200||readiness["data"]["ready"]!=true{return Err(ApiError(StatusCode::CONFLICT,"managed_node_not_ready"));}
     let node=crate::state::node(state,active).await?;let node_doc:Value=node.get("document");
     let (status,response)=crate::state::node_request(state,active,reqwest::Method::GET,"/v1/fleet/compatibility",None,None).await?;
     let fingerprint=response.pointer("/data/fingerprint").and_then(Value::as_str).ok_or_else(bad)?;

@@ -5,7 +5,7 @@ async function setup(page: Page, missing = false) {
   const now = Date.now();
   const snapshot = {
     management: 'reachable', ready: true, upload_bps: 1000000, download_bps: 150000000,
-    traffic: { available: true, active_users: 15, current_connections: 180, octets_from_client: 1024 ** 3, octets_to_client: 3 * 1024 ** 3 },
+    traffic: { available: true, active_users: 15, active_ips: 42, active_ips_incomplete: false, current_connections: 180, octets_from_client: 1024 ** 3, octets_to_client: 3 * 1024 ** 3 },
     info: { version: '3.5.9', uptime_seconds: 22000, process_started_at_epoch_secs: Math.floor(now / 1000) - 22000 },
     summary: { connections_total: 10000, connections_bad_total: 1000, handshake_timeouts_total: 50, connections_bad_by_class: [{ class: 'tls_handshake_bad_client', total: 1000 }], handshake_failures_by_class: [] },
     handshake_timeouts_per_minute: 12,
@@ -67,4 +67,38 @@ test('stale and unavailable overview values never appear as healthy or zero', as
   await expect(card.getByText('Нет данных', { exact: true }).first()).toBeVisible();
   await expect(card.getByText('0 Мбит/с', { exact: true })).toHaveCount(0);
   await expect(page.getByRole('button', { name: /Нет свежих измерений более 15 секунд/ })).toHaveCount(2);
+});
+
+
+test('fleet summary and server rows show IP clients and directional traffic without counting stale nodes', async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 1440, height: 1100 });
+  await page.emulateMedia({ colorScheme: 'dark' });
+  const errors: string[] = []; page.on('pageerror', error => errors.push(error.message));
+  await setup(page);
+  const connections = page.getByRole('region', { name: 'Подключения кластера', exact: true });
+  await expect(connections.locator('.fleet-stat').filter({ hasText: 'IP-клиенты онлайн' }).locator('strong')).toHaveText('42');
+  await expect(connections.locator('.fleet-stat').filter({ hasText: 'Активные соединения' }).locator('strong')).toHaveText('180');
+  const traffic = page.getByRole('region', { name: 'Трафик кластера', exact: true });
+  await expect(traffic.locator('.fleet-stat strong')).toHaveText(['1 ГиБ', '3 ГиБ', '4 ГиБ']);
+  await expect(traffic.getByText('Свежие данные: 1 из 2 серверов')).toHaveCount(3);
+  await page.screenshot({ path: testInfo.outputPath('fleet-summary-desktop.png') });
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
+  await page.screenshot({ path: testInfo.outputPath('fleet-summary-mobile.png') });
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.getByRole('navigation').getByRole('button', { name: 'Серверы', exact: true }).click();
+  const node = page.getByRole('article', { name: 'Сервер one-156.122', exact: true });
+  await expect(node.locator('.fleet-client-badge strong')).toHaveText('42');
+  await expect(node.getByText('4 ГиБ', { exact: true })).toBeVisible();
+  await expect(node.getByText('↑ 1 Мбит/с', { exact: true })).toBeVisible();
+  await expect(node.getByText('↓ 150 Мбит/с', { exact: true })).toBeVisible();
+  const stale = page.getByRole('article', { name: 'Сервер Резерв', exact: true });
+  await expect(stale.getByText('Нет свежих данных', { exact: true })).toBeVisible();
+  await expect(stale.locator('.fleet-client-badge strong')).toHaveText('—');
+  await expect(node.getByRole('button', { name: 'Удалить' })).toHaveCount(0);
+  await page.screenshot({ path: testInfo.outputPath('fleet-servers-desktop.png') });
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
+  await page.screenshot({ path: testInfo.outputPath('fleet-servers-mobile.png'), fullPage: true });
+  expect(errors).toEqual([]);
 });

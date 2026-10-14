@@ -140,17 +140,28 @@ Automatic failover retains the existing quorum, cooldown and DNS readback rules.
 external DNS changes and unknown writes require reconciliation; profile publication does not
 clear those conditions. A profile port change requires detaching/reconfiguring its DNS group.
 
-To adopt a direct-API node, import its TOML into the profile, preserve all user keys, publish
-and choose **Перевести на профиль**. The node must run a version exposing the user compatibility
-fingerprint. Fleet rejects mismatching keys and domains. Stop the old telemt/nginx deployment
-before starting the generated managed file, since ports must not overlap. Keep the old config,
-certificate and Compose file for rollback. Migration may change the native port; verify links.
-After rollback to the old deployment, reconnect it as a direct-API node in Fleet.
+Direct API registration and adoption are no longer supported. Existing direct registrations are
+retired by migration and can be deleted in Fleet. To retain their users, explicitly import the
+configuration into a shared profile, verify the keys and publish it, then register a new managed
+node using the wizard. Stop the old process before starting the managed deployment on its ports.
 
-Single-server IP-pool rotation currently belongs to the direct-API deployment path. A managed
-profile uses its assigned node IP and DNS switching between servers. Remove a direct node's
-IP pool before adoption; creation of an IP pool for a managed node is explicitly rejected.
-No listener or DNS mutation is silently performed during adoption or enrollment.
+## Upgrading to managed endpoint pools
+
+Back up PostgreSQL and the master key before the coordinated update. Update Fleet first, then
+managed-node images and external probe agents to the same release. The database migration
+invalidates old probe evidence, pauses existing pools and requests fresh endpoint-aware bundles.
+A new node agent preserves its installation identity but does not execute a retired cached bundle;
+it fetches the current bundle from Fleet. Fleet must therefore be available for this first upgrade.
+After a current bundle has committed, offline restart works normally again. Rolling back requires
+restoring the pre-upgrade database/image set; retired direct registrations are not re-enabled.
+
+Each managed node can own a pool of assigned interface addresses. Pool preparation deploys nginx
+and native listeners for every address and restarts the node once. Subsequent DNS rotation keeps
+those listeners alive, so recovery remains measurable without restarting telemt. Fleet rotates
+within the active node first and permits cross-server migration only when all its pool addresses
+are confirmed unavailable. Reserves must belong to the same profile. Unknown results never count
+as failure. WEB and native transport results are displayed independently for each IP. See
+[managed rotation](README.md#managed-ip-rotation-and-server-failover) for quorum and controls.
 
 ## Local verification
 
@@ -158,7 +169,7 @@ The test harness uses real binaries, nginx and PostgreSQL with temporary local c
 It does not call Cloudflare or change public DNS. It creates two isolated bridge-network nodes
 instead of production host networking and deletes only its own containers/volumes on exit.
 Prerequisites: Docker/Compose, Python 3.11+, OpenSSL, free local port 18444 and subnet
-172.30.91.0/24. Override the latter with `--port` and `--subnet`.
+172.30.91.0/24 plus its adjacent /24 in the same /23 (172.30.90.0/24 by default). Override with `--port` and `--subnet`.
 
 ```sh
 docker build -f deploy/fleet/Dockerfile --target admin -t telemt-admin:managed-test .
@@ -166,7 +177,8 @@ docker build -f deploy/fleet/Dockerfile --target managed-node -t telemt-managed-
 python3 deploy/fleet/tests/managed_smoke.py
 ```
 
-It checks enrollment, revisions, actual node readiness, mismatched certificate rejection,
+It checks enrollment, revisions, actual node readiness, assigned-interface pool preparation,
+HTTPS and WEB sessions on both IPs, pool retention across profile updates, mismatched certificate rejection,
 certificate replacement without telemt restart, two-node user rollout, rollback preserving
 client links, local drift repair, and restart from committed state with Fleet stopped. `--keep` retains the isolated
 fixtures for diagnosis; they contain test-only keys and registration tokens. Production image

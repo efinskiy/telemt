@@ -25,19 +25,23 @@ pub(crate) async fn route(state:&State,user:&Session,parts:&[&str],method:&Metho
             if zone.len()!=32||hex::decode(zone).is_err(){return Err(invalid("dns_invalid_zone_id"));}
             let nodes=body.get("node_ids").and_then(Value::as_array).ok_or_else(||invalid("dns_invalid_members"))?;
             if nodes.is_empty()||nodes.len()>20{return Err(invalid("dns_invalid_members"));}
+            let mut tx=state.db.begin().await?;
+            sqlx::query("SELECT pg_advisory_xact_lock($1)").bind(crate::state::DNS_COORDINATOR_LOCK).execute(&mut *tx).await?;
             let mut unique=std::collections::HashSet::new();let mut ordered=Vec::new();
             for node in nodes {
                 let node=node.as_str().and_then(|id|Uuid::parse_str(id).ok()).ok_or_else(||invalid("dns_invalid_members"))?;
                 if !unique.insert(node){return Err(invalid("dns_invalid_members"));}ordered.push(node);
                 crate::state::node(state,node).await.map_err(|error|if error.1=="invalid_request"{invalid("dns_member_not_found")}else{error})?;
             }
+            let profiles:Vec<Uuid>=sqlx::query_scalar("SELECT profile_id FROM managed_nodes WHERE node_id=ANY($1) AND NOT revoked").bind(&ordered).fetch_all(&mut *tx).await?;
+            if profiles.len()!=ordered.len()||profiles.iter().any(|profile|Some(profile)!=profiles.first()){return Err(invalid("reserve_requires_same_profile"));}
             for (key,code) in [("record_a_id","dns_invalid_a_record_id"),("record_aaaa_id","dns_invalid_aaaa_record_id")] {
                 if let Some(id)=body.get(key).and_then(Value::as_str).filter(|s|!s.is_empty()) && (id.len()!=32||hex::decode(id).is_err()){return Err(invalid(code));}
             }
             if body["record_a_id"].as_str().is_none_or(|s|s.is_empty())&&body["record_aaaa_id"].as_str().is_none_or(|s|s.is_empty()){return Err(invalid("dns_record_required"));}
             let count:i64=sqlx::query_scalar("SELECT count(*) FROM failover_groups").fetch_one(&state.db).await?;
             if count>=20{return Err(ApiError(StatusCode::CONFLICT,"dns_group_limit"));}
-            let id=Uuid::new_v4();let mut document=json!({"domain":domain.to_ascii_lowercase(),"zone_id":zone,"node_ids":ordered,"record_a_id":body.get("record_a_id"),"record_aaaa_id":body.get("record_aaaa_id"),"configuration_verified":true});
+            let id=Uuid::new_v4();let mut document=json!({"domain":domain.to_ascii_lowercase(),"zone_id":zone,"node_ids":ordered,"record_a_id":body.get("record_a_id"),"record_aaaa_id":body.get("record_aaaa_id"),"configuration_verified":true,"profile_id":profiles[0]});
             let token=field(&body,"token").map_err(|_|invalid("dns_invalid_token"))?;
             if token.is_empty()||token.len()>1024{return Err(invalid("dns_invalid_token"));}
             let observed=read_records(state,&document,token).await?;
@@ -54,14 +58,14 @@ pub(crate) async fn route(state:&State,user:&Session,parts:&[&str],method:&Metho
                 if record["content"]!=doc[if key=="A"{"ipv4"}else{"ipv6"}]{return Err(ApiError(StatusCode::CONFLICT,if key=="A"{"dns_active_ipv4_mismatch"}else{"dns_active_ipv6_mismatch"}));}
             }
             let cipher=state.vault.seal(token,&format!("dns:{id}"))?;
-            sqlx::query("INSERT INTO failover_groups(id,name,document,token_cipher,active_node,observed) VALUES($1,$2,$3,$4,$5,$6)").bind(id).bind(name).bind(document).bind(cipher).bind(active).bind(observed).execute(&state.db).await?;
+            sqlx::query("INSERT INTO failover_groups(id,name,document,token_cipher,active_node,observed) VALUES($1,$2,$3,$4,$5,$6)").bind(id).bind(name).bind(document).bind(cipher).bind(active).bind(observed).execute(&mut *tx).await?;tx.commit().await?;
             audit(state,Some(user.id),"dns.enroll",&id.to_string(),json!({})).await?;Ok(Json(ok(json!({"id":id}))))
         }
         ["groups",id] if *method==Method::PATCH=>management::patch(state,user,parse_id(id)?,body).await,
         ["groups",id] if *method==Method::DELETE=>management::remove(state,user,parse_id(id)?).await,
         ["groups",id,"records"] if *method==Method::GET=>{user.require("owner")?;let id=parse_id(id)?;let group=load(state,id).await?;let token=state.vault.open(&group.get::<String,_>("token_cipher"),&format!("dns:{id}"))?;Ok(Json(ok(read_records(state,&group.get::<Value,_>("document"),&token).await?)))}
         ["groups",id,"repair"] if *method==Method::POST=>{user.require("owner")?;provider::repair(state,parse_id(id)?,parse_id(field(&body,"node_id")?)?,body.get("expected_records").ok_or_else(bad)?,user.id).await?;Ok(Json(ok(json!({}))))}
-        ["groups",id,"verify-configuration"] if *method==Method::POST=>management::verify(state,user,parse_id(id)?).await,
+        ["groups",id,"verify-configuration"] if *method==Method::POST=>management::verify(state,user,parse_id(id)?,&body).await,
         ["groups",id,"preview"] if *method==Method::POST=>{user.require("owner")?;let id=parse_id(id)?;let target=parse_id(field(&body,"node_id")?)?;let group=load(state,id).await?;let intent=eligible(state,&group,target).await?;Ok(Json(ok(json!({"node_id":target,"intent":intent,"ttl":60,"dns_only":true}))))}
         ["groups",id,"switch"] if *method==Method::POST=>{user.require("owner")?;change(state,parse_id(id)?,parse_id(field(&body,"node_id")?)?,Some(user.id)).await?;Ok(Json(ok(json!({}))))}
         ["groups",id,"reconcile"] if *method==Method::POST=>{user.require("owner")?;provider::recover(state,parse_id(id)?).await?;Ok(Json(ok(json!({}))))}
@@ -86,7 +90,9 @@ pub(crate) async fn tick(state:&State)->anyhow::Result<()> {
         for family in &families{let health=probes::health(state,active,*family).await?;failed|=health==Health::Failed;unknown|=health==Health::Unknown;}
         let cooldown=fresh(group.get("last_switch"),300);
         let mut status=if unknown{"probe_state_unknown"}else if failed{"no_healthy_reserve"}else{"healthy"};
-        if failed&&!unknown&&!cooldown {
+        let exhausted=crate::rotation::selection::exhausted(state,active).await.map_err(|error|anyhow::anyhow!(error.1))?;
+        if failed&&!unknown&&!exhausted {status="waiting_for_local_ip_rotation";}
+        if failed&&!unknown&&!cooldown&&exhausted {
             if let Some(nodes)=document["node_ids"].as_array(){for candidate in nodes {let Some(raw)=candidate.as_str()else{continue;};let candidate:Uuid=raw.parse()?;if candidate==active{continue;}
                 if eligible(state,&group,candidate).await.is_ok(){match change(state,id,candidate,None).await{Ok(())=>status="switched",Err(error)=>status=error.1,}break;}
             }}

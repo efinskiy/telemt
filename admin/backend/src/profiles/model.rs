@@ -57,11 +57,16 @@ pub(crate) fn domain(value:&str) -> Result<String> {
 
 pub(super) fn render(doc:&ProfileDocument,domain:&str,ip:&str,token:&str,probe:&str,overrides:&Value)->Result<(String,String)> {
     let address:std::net::IpAddr=ip.parse().map_err(|_|bad())?;
+    let endpoints:Vec<std::net::IpAddr>=if let Some(values)=overrides["public_ips"].as_array(){values.iter().map(|value|value.as_str().ok_or_else(bad)?.parse().map_err(|_|bad())).collect::<Result<_>>()?}else{vec![address]};
+    if endpoints.is_empty()||endpoints.len()>8||!endpoints.contains(&address){return Err(bad());}
     let mut value=doc.settings.clone();
     if !value["general"].is_object(){value["general"]=json!({});}
     value["general"]["modes"]=json!({"classic":false,"secure":true,"tls":true});
     value["general"]["links"]=json!({"show":[],"public_host":domain,"public_port":doc.native_port});
     value["server"]=json!({"port":doc.native_port,"api":{"enabled":true,"listen":telemt_managed::API_ADDR,"whitelist":["127.0.0.1/32"],"auth_header":token,"read_only":false},"listeners":[{"ip":ip,"port":doc.native_port,"transport":"mtproxy","proxy_protocol":false,"announce":domain},{"ip":"127.0.0.1","port":18080,"transport":"web","proxy_protocol":false,"reuse_allow":false,"web_client_ip_source":"x_forwarded_for","web_trusted_proxy_cidrs":["127.0.0.1/32"]}]});
+    let listeners=value["server"]["listeners"].as_array_mut().ok_or_else(bad)?;
+    let anchor=listeners[0].clone();
+    for endpoint in &endpoints {if endpoint!=&address {let mut listener=anchor.clone();listener["ip"]=json!(endpoint.to_string());listeners.push(listener);}}
     let mut users=json!({"fleet_probe":probe});let mut enabled=json!({});let mut quotas=json!({});let mut rates=json!({});let mut profiles=vec![json!({"user":"fleet_probe","secret_mode":"dd"})];
     for user in &doc.users {
         if user.username=="fleet_probe"{return Err(bad());}
@@ -77,10 +82,11 @@ pub(super) fn render(doc:&ProfileDocument,domain:&str,ip:&str,token:&str,probe:&
     if !value["web"]["limits"].is_object(){value["web"]["limits"]=json!({});}
     value["web"]["limits"]["max_profiles"]=json!(doc.users.len()+1);
     value["web"]["enabled"]=json!(true);value["web"]["carrier"]=json!("https");
-    value["web"]["vhosts"]=json!([{"host":domain,"base_path":doc.base_path,"public_addr":std::net::SocketAddr::new(address,443).to_string(),"decoy":{"mode":"static_directory","directory":"/app/public","index":"index.html"},"profiles":profiles}]);
+    value["web"]["vhosts"]=json!([{"host":domain,"base_path":doc.base_path,"public_addr":std::net::SocketAddr::new(address,443).to_string(),"public_addrs":endpoints.iter().map(|ip|std::net::SocketAddr::new(*ip,443).to_string()).collect::<Vec<_>>(),"decoy":{"mode":"static_directory","directory":"/app/public","index":"index.html"},"profiles":profiles}]);
     for key in ["upload_bps","download_bps"] {if let Some(capacity)=overrides.get(key).and_then(Value::as_u64) {if !value["shaping"].is_object(){value["shaping"]=json!({});}value["shaping"][if key=="upload_bps"{"up_bps"}else{"down_bps"}]=json!(capacity);}}
     let toml=toml::to_string_pretty(&value).map_err(|_|bad())?;
-    let bind=std::net::SocketAddr::new(address,443);
+    let binds=endpoints.iter().map(|ip|format!("listen {} ssl;",std::net::SocketAddr::new(*ip,443))).collect::<Vec<_>>().join("\n        ");
+    let destinations=endpoints.iter().map(|ip|format!("\"{ip}\" \"{}\";",std::net::SocketAddr::new(*ip,443))).collect::<Vec<_>>().join(" ");
     let nginx=format!(r#"worker_processes auto;
 error_log stderr warn;
 pid /var/lib/telemt-managed/nginx.pid;
@@ -93,8 +99,9 @@ http {{
     uwsgi_temp_path /tmp/uwsgi;
     scgi_temp_path /tmp/scgi;
     map $http_upgrade $connection_upgrade {{ default upgrade; '' ''; }}
+    map $server_addr $telemt_public_address {{ default ''; {destinations} }}
     server {{
-        listen {bind} ssl;
+        {binds}
         http2 on;
         server_name {domain};
         ssl_certificate @BUNDLE_DIR@/fullchain.pem;
@@ -105,6 +112,7 @@ http {{
             proxy_http_version 1.1;
             proxy_set_header Host $host;
             proxy_set_header X-Forwarded-For $remote_addr;
+            proxy_set_header X-Telemt-Public-Address $telemt_public_address;
             proxy_set_header Upgrade $http_upgrade;
             proxy_set_header Connection $connection_upgrade;
             proxy_buffering off;

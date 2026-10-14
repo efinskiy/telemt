@@ -83,6 +83,9 @@ pub struct WebVhostConfig {
     pub base_path: String,
     /// Stable public destination tuple used by inner relay routing and KDF metadata.
     pub public_addr: SocketAddr,
+    /// Explicit endpoints accepted only from a trusted ingress destination header.
+    #[serde(default)]
+    pub public_addrs: Vec<SocketAddr>,
     /// Ordinary-site fallback for this hostname.
     pub decoy: WebDecoyConfig,
     /// Access users and exact secret modes enabled for this hostname.

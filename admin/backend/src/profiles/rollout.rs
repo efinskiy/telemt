@@ -19,10 +19,13 @@ pub(crate) async fn enqueue(state:&State,tx:&mut sqlx::Transaction<'_,sqlx::Post
     let document:Value=row.get("document");let ip=document["ipv4"].as_str().or_else(||document["ipv6"].as_str()).ok_or_else(bad)?;
     let token=state.vault.open(&row.get::<String,_>("token_cipher"),&format!("node:{node_id}"))?;
     let probe=state.vault.open(&row.get::<String,_>("probe_cipher"),&format!("probe:{node_id}"))?;
-    let (config,nginx)=model::render(&doc,&domain,ip,&token,&probe,&row.get("overrides"))?;
+    let pool:Option<Value>=sqlx::query_scalar("SELECT addresses FROM ip_pools WHERE node_id=$1").bind(node_id).fetch_optional(&mut **tx).await?;
+    let public_ips:Vec<String>=if let Some(pool)=pool{serde_json::from_value(pool).map_err(|_|bad())?}else{["ipv4","ipv6"].into_iter().filter_map(|key|document[key].as_str().filter(|s|!s.is_empty()).map(str::to_owned)).collect()};
+    let mut overrides:Value=row.get("overrides");overrides["public_ips"]=json!(public_ips);
+    let (config,nginx)=model::render(&doc,&domain,ip,&token,&probe,&overrides)?;
     sqlx::query("DELETE FROM probe_jobs WHERE node_id=$1").bind(node_id).execute(&mut **tx).await?;
     let id:i64=sqlx::query_scalar("INSERT INTO deployments(node_id,profile_revision,certificate_revision,bundle_cipher,digest,actor) VALUES($1,$2,$3,'','',$4) RETURNING id").bind(node_id).bind(revision).bind(cert_revision).bind(actor).fetch_one(&mut **tx).await?;
-    let bundle=telemt_managed::Bundle{revision:id,profile_revision:revision,certificate_revision:cert_revision,node_id:node_id.to_string(),domain:domain.clone(),public_ip:ip.into(),config,nginx,fullchain:cert["fullchain"].as_str().ok_or_else(bad)?.into(),private_key:cert["private_key"].as_str().ok_or_else(bad)?.into(),api_token:token.to_string()};
+    let bundle=telemt_managed::Bundle{revision:id,profile_revision:revision,certificate_revision:cert_revision,node_id:node_id.to_string(),domain:domain.clone(),public_ip:ip.into(),public_ips,config,nginx,fullchain:cert["fullchain"].as_str().ok_or_else(bad)?.into(),private_key:cert["private_key"].as_str().ok_or_else(bad)?.into(),api_token:token.to_string()};
     let digest=bundle.digest()?;let raw=serde_json::to_string(&bundle).map_err(|_|bad())?;
     // Reserve the vault nonce and authentication tag within its decoded-record limit.
     if raw.len()>telemt_managed::MAX_BUNDLE_BYTES-28{return Err(bad());}
@@ -49,7 +52,8 @@ pub(crate) async fn tick(state:&State)->anyhow::Result<()> {
     Ok(())
 }
 
-/// Serialize all per-node renders with profile publication before taking the managed-node lock.
+/// Fence DNS readiness before locking the profile and then the managed node.
 pub(crate) async fn lock_profile(tx:&mut sqlx::Transaction<'_,sqlx::Postgres>,node:Uuid)->Result<()> {
+    sqlx::query("SELECT pg_advisory_xact_lock($1)").bind(crate::state::DNS_COORDINATOR_LOCK).execute(&mut **tx).await?;
     sqlx::query("SELECT p.id FROM profiles p JOIN managed_nodes m ON m.profile_id=p.id WHERE m.node_id=$1 FOR UPDATE OF p").bind(node).fetch_one(&mut **tx).await?;Ok(())
 }

@@ -15,7 +15,7 @@ async fn socket_probe_authenticates_flight_and_fragmented_res_pq() {
         let reverse:Vec<_>=nonce[8..56].iter().rev().copied().collect();let mut key=reverse[..32].to_vec();key.extend(secret);let key:[u8;32]=Sha256::digest(key).into();let mut tx=Cipher::new((&key).into(),reverse[32..48].into());let mut response=(frame.len() as u32).to_le_bytes().to_vec();response.extend(frame);tx.apply_keystream(&mut response);
         write_record(&mut stream,&response[..13]).await.unwrap();write_record(&mut stream,&response[13..]).await.unwrap();
     });
-    let job=Job{web_required:false,web_base_path:None,id:"test".into(),node_id:"test".into(),round:1,family:4,ip:"127.0.0.1".into(),port,sni:"example.org".into(),dc:2,secret:hex::encode(secret),expires_at:chrono::Utc::now()+chrono::Duration::seconds(5)};
+    let job=Job{web_base_path:None,id:"test".into(),node_id:"test".into(),round:1,family:4,ip:"127.0.0.1".into(),port,sni:"example.org".into(),dc:2,secret:hex::encode(secret),expires_at:chrono::Utc::now()+chrono::Duration::seconds(5)};
     assert_eq!(tokio::time::timeout(std::time::Duration::from_secs(5),probe(&job)).await.unwrap(),Ok(()));server.await.unwrap();
 }
 
@@ -24,6 +24,6 @@ async fn socket_probe_authenticates_flight_and_fragmented_res_pq() {
 async fn isolated_telemt_round_trip() {
     let ip=std::env::var("TELEMT_PROBE_TEST_IP").unwrap_or_else(|_|"127.0.0.1".into());
     assert!(ip.parse::<std::net::IpAddr>().unwrap().is_loopback());
-    let job=Job{web_required:false,web_base_path:None,id:"integration".into(),node_id:"integration".into(),round:1,family:4,ip,port:std::env::var("TELEMT_PROBE_TEST_PORT").unwrap().parse().unwrap(),sni:std::env::var("TELEMT_PROBE_TEST_SNI").unwrap(),dc:2,secret:std::env::var("TELEMT_PROBE_TEST_SECRET").unwrap(),expires_at:chrono::Utc::now()+chrono::Duration::seconds(5)};
+    let job=Job{web_base_path:None,id:"integration".into(),node_id:"integration".into(),round:1,family:4,ip,port:std::env::var("TELEMT_PROBE_TEST_PORT").unwrap().parse().unwrap(),sni:std::env::var("TELEMT_PROBE_TEST_SNI").unwrap(),dc:2,secret:std::env::var("TELEMT_PROBE_TEST_SECRET").unwrap(),expires_at:chrono::Utc::now()+chrono::Duration::seconds(5)};
     assert_eq!(tokio::time::timeout(std::time::Duration::from_secs(5),probe(&job)).await.unwrap(),Ok(()));
 }

@@ -39,7 +39,8 @@ pub(crate) async fn route(state:&State,user:&Session,parts:&[&str],method:&Metho
             let doc=prepare(body["document"].clone(),Some(&old))?;
             if user.role!="owner" && (doc.native_port!=old["native_port"].as_u64().unwrap_or(0) as u16 || doc.base_path!=old["base_path"].as_str().unwrap_or("")){return Err(ApiError(StatusCode::FORBIDDEN,"owner_required"));}
             let group=if let Some(value)=body.get("group_id") {user.require("owner")?;if value.is_null(){None}else{Some(parse_id(value.as_str().ok_or_else(bad)?)?)}}else{row.get::<Option<Uuid>,_>("group_id")};
-            if let Some(group)=group{let domain:String=sqlx::query_scalar("SELECT domain FROM profiles WHERE id=$1").bind(id).fetch_one(&mut *tx).await?;let enrolled:String=sqlx::query_scalar("SELECT document->>'domain' FROM failover_groups WHERE id=$1").bind(group).fetch_one(&mut *tx).await?;if domain!=enrolled{return Err(bad());}}
+            if let Some(group)=group{let domain:String=sqlx::query_scalar("SELECT domain FROM profiles WHERE id=$1").bind(id).fetch_one(&mut *tx).await?;let enrolled:Value=sqlx::query_scalar("SELECT document FROM failover_groups WHERE id=$1").bind(group).fetch_one(&mut *tx).await?;if domain!=enrolled["domain"]{return Err(bad());}
+                if enrolled["profile_id"]!=id.to_string(){return Err(ApiError(StatusCode::CONFLICT,"reserve_requires_same_profile"));}}
             let cipher=state.vault.seal(&serde_json::to_string(&doc).map_err(|_|bad())?,&format!("profile-draft:{id}"))?;
             sqlx::query("UPDATE profiles SET draft_cipher=$2,draft_revision=draft_revision+1,group_id=$3 WHERE id=$1").bind(id).bind(cipher).bind(group).execute(&mut *tx).await?;tx.commit().await?;
             audit(state,Some(user.id),"profile.edit",&id.to_string(),json!({"revision":expected+1})).await?;Ok(Json(ok(json!({"draft_revision":expected+1}))))

@@ -27,6 +27,8 @@ pub(super) async fn handle(
                 for vhost in vhosts {
                     let port = vhost["public_addr"].as_str().and_then(|value| value.parse::<std::net::SocketAddr>().ok()).map(|address| address.port());
                     vhost["public_addr"] = serde_json::json!(port);
+                    // Endpoint inventories differ across nodes without changing client capabilities.
+                    if let Some(object) = vhost.as_object_mut() { object.remove("public_addrs"); }
                 }
             }
             let manifest = serde_json::json!({
@@ -53,7 +55,11 @@ pub(super) async fn handle(
             }
             let shaping = shared.proxy_shared.traffic_limiter.shaping_snapshot(0, 0);
             if shaping.enabled { up = shaping.committed_bytes[0]; down = shaping.committed_bytes[1]; }
+            // Reuse admission state so shared accounts and disabled telemetry do not distort IP counts.
+            let clients = shared.ip_tracker.live_clients(10_000).await;
             let data = serde_json::json!({"octets_from_client": up, "octets_to_client": down,
+                "active_ips": clients.total_ips,
+                "active_ips_incomplete": clients.truncated || clients.cleanup_pending > 0,
                 "available": shaping.enabled || shared.stats.telemetry_policy().user_enabled,
                 "counter_source": if shaping.enabled { "shaping" } else { "user_stats" },
                 "counter_instance": shaping.counter_instance,

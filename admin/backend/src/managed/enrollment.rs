@@ -7,42 +7,17 @@ use uuid::Uuid;
 pub(crate) async fn route(state:&State,user:&Session,parts:&[&str],method:&Method,body:Value)->Result<Json<Value>>{
     user.require("owner")?;
     match parts{
-        ["nodes",id,"adopt"] if *method==Method::POST=>{
-            if body["confirm_replacement"]!=true{return Err(bad());}
-            let id=parse_id(id)?;let profile=parse_id(field(&body,"profile_id")?)?;
-            let (status,compat)=crate::state::node_request(state,id,reqwest::Method::GET,"/v1/fleet/compatibility",None,None).await?;
-            if status!=200{return Err(ApiError(StatusCode::CONFLICT,"migration_readiness_required"));}
-            let mut tx=state.db.begin().await?;
-            sqlx::query("SELECT pg_advisory_xact_lock($1)").bind(crate::state::DNS_COORDINATOR_LOCK).execute(&mut *tx).await?;
-            let pools:i64=sqlx::query_scalar("SELECT count(*) FROM ip_pools WHERE node_id=$1").bind(id).fetch_one(&mut *tx).await?;
-            if pools>0{return Err(ApiError(StatusCode::CONFLICT,"remove_ip_pool_before_migration"));}
-            let p=sqlx::query("SELECT p.*,v.document_cipher FROM profiles p JOIN profile_versions v ON v.profile_id=p.id AND v.revision=p.published_revision WHERE p.id=$1 FOR UPDATE OF p").bind(profile).fetch_one(&mut *tx).await?;
-            let raw=state.vault.open(&p.get::<String,_>("document_cipher"),&format!("profile:{profile}:{}",p.get::<i64,_>("published_revision")))?;
-            let doc=crate::profiles::model::validate(serde_json::from_str(&raw).map_err(|_|bad())?)?;
-            let mut users:Vec<_>=doc.users.iter().map(|u|(&u.username,&u.secret,u.enabled)).collect();users.sort_unstable_by_key(|(name,_,_)|*name);
-            if compat["data"]["user_fingerprint"]!=crypto::hash(&json!(users).to_string()){return Err(ApiError(StatusCode::CONFLICT,"migration_keys_mismatch"));}
-            let n=sqlx::query("SELECT api_url,document FROM nodes WHERE id=$1 FOR UPDATE").bind(id).fetch_one(&mut *tx).await?;
-            if n.get::<String,_>("api_url")=="managed://local"{return Err(bad());}
-            let mut document:Value=n.get("document");if document["sni"]!=p.get::<String,_>("domain"){return Err(bad());}
-            document["managed"]=json!(true);document["profile_id"]=json!(profile);
-            let token=format!("Bearer {}",crypto::random());let probe=state.vault.open(&p.get::<String,_>("probe_cipher"),&format!("profile-probe:{profile}"))?;
-            sqlx::query("UPDATE nodes SET api_url='managed://local',token_cipher=$2,probe_cipher=$3,document=$4,collected_at=NULL WHERE id=$1").bind(id).bind(state.vault.seal(&token,&format!("node:{id}"))?).bind(state.vault.seal(&probe,&format!("probe:{id}"))?).bind(document).execute(&mut *tx).await?;
-            let enrollment=crypto::random();sqlx::query("INSERT INTO managed_nodes(node_id,profile_id,enrollment_hash,enrollment_expires) VALUES($1,$2,$3,now()+interval '24 hours')").bind(id).bind(profile).bind(crypto::hash(&enrollment)).execute(&mut *tx).await?;
-            sqlx::query("UPDATE failover_groups SET automatic=false,status='configuration_change_requires_verification',document=jsonb_set(document,'{configuration_verified}','false') WHERE document->'node_ids' @> $1::jsonb").bind(json!([id])).execute(&mut *tx).await?;
-            crate::profiles::enqueue(state,&mut tx,id,Some(user.id)).await?;let compose=compose(state,id,&enrollment)?;tx.commit().await?;
-            audit(state,Some(user.id),"node.adopt",&id.to_string(),json!({"profile":profile})).await?;Ok(Json(ok(json!({"id":id,"compose":compose,"expires_in_seconds":86400}))))
-        }
-
         ["managed-nodes"] if *method==Method::POST=>{
             let name=crate::state::bounded_name(&body,"name")?;let profile=parse_id(field(&body,"profile_id")?)?;
             let ip:std::net::IpAddr=field(&body,"ip")?.parse().map_err(|_|bad())?;
             if ip.is_unspecified()||ip.is_multicast()||ip.is_loopback(){return Err(bad());}
             let mut tx=state.db.begin().await?;
+            sqlx::query("SELECT pg_advisory_xact_lock($1)").bind(crate::state::DNS_COORDINATOR_LOCK).execute(&mut *tx).await?;
             let p=sqlx::query("SELECT domain,probe_cipher,published_revision FROM profiles WHERE id=$1 FOR UPDATE").bind(profile).fetch_one(&mut *tx).await?;
             if p.get::<i64,_>("published_revision")==0{return Err(ApiError(StatusCode::CONFLICT,"publish_profile_first"));}
             let id=Uuid::new_v4();let token=format!("Bearer {}",crypto::random());let probe=state.vault.open(&p.get::<String,_>("probe_cipher"),&format!("profile-probe:{profile}"))?;
             let document=json!({"ipv4":if ip.is_ipv4(){Some(ip.to_string())}else{None},"ipv6":if ip.is_ipv6(){Some(ip.to_string())}else{None},"port":8443,"sni":p.get::<String,_>("domain"),"probe_dc":2,"managed":true,"profile_id":profile});
-            sqlx::query("INSERT INTO nodes(id,name,api_url,token_cipher,probe_cipher,document) VALUES($1,$2,'managed://local',$3,$4,$5)").bind(id).bind(name).bind(state.vault.seal(&token,&format!("node:{id}"))?).bind(state.vault.seal(&probe,&format!("probe:{id}"))?).bind(document).execute(&mut *tx).await?;
+            sqlx::query("INSERT INTO nodes(id,name,token_cipher,probe_cipher,document) VALUES($1,$2,$3,$4,$5)").bind(id).bind(name).bind(state.vault.seal(&token,&format!("node:{id}"))?).bind(state.vault.seal(&probe,&format!("probe:{id}"))?).bind(document).execute(&mut *tx).await?;
             let enrollment=crypto::random();
             sqlx::query("INSERT INTO managed_nodes(node_id,profile_id,enrollment_hash,enrollment_expires) VALUES($1,$2,$3,now()+interval '24 hours')").bind(id).bind(profile).bind(crypto::hash(&enrollment)).execute(&mut *tx).await?;
             crate::profiles::enqueue(state,&mut tx,id,Some(user.id)).await?;

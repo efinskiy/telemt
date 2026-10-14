@@ -6,6 +6,8 @@ import hashlib
 import hmac
 import http.client
 import json
+import ipaddress
+import uuid
 import pathlib
 import secrets
 import shutil
@@ -40,6 +42,10 @@ class Smoke:
         self.files = []
         self.cookie = self.csrf = ''
         self.nodes = []
+        self.reserve_subnet = ipaddress.ip_network(args.subnet + '.0/24').supernet(new_prefix=23)
+        primary = ipaddress.ip_network(args.subnet + '.0/24')
+        self.reserve_network = next(net for net in self.reserve_subnet.subnets(new_prefix=24) if net != primary)
+        self.reserve_ip = str(self.reserve_network.network_address + 10)
 
     def compose(self, filename, *args, capture=False):
         return command('docker', 'compose', '-f', str(self.path / filename), *args, capture=capture)
@@ -130,12 +136,17 @@ class Smoke:
         source = node['compose']
         # Only the test network, local image and test PKI differ from the wizard's exact file.
         source = source.replace('name: telemt-managed', 'name: ' + self.project + '-' + suffix)
-        source = source.replace('    network_mode: host', '    networks: {test: {ipv4_address: ' + ip + '}}')
+        networks = 'test: {ipv4_address: ' + ip + '}'
+        if suffix == 'a':
+            networks += ', reserve: {ipv4_address: ' + self.reserve_ip + '}'
+        source = source.replace('    network_mode: host', '    networks: {' + networks + '}')
         image = source.split('    image: ')[1].splitlines()[0]
         source = source.replace('    image: ' + image, '    image: ' + self.args.node_image)
         source = source.replace('      FLEET_URL:', '      MANAGED_CA_FILE: /test-ca.pem\n      FLEET_URL:')
         source = source.replace('    volumes: [state:/var/lib/telemt-managed]', f'    volumes: [state:/var/lib/telemt-managed, {self.path}/ca.pem:/test-ca.pem:ro]')
         source += '\nnetworks:\n  test:\n    external: true\n    name: ' + self.project + '\n'
+        if suffix == 'a':
+            source += '  reserve:\n    ipam:\n      config: [{subnet: ' + str(self.reserve_network) + '}]\n'
         filename = suffix + '.yml'
         (self.path / filename).write_text(source)
         (self.path / filename).chmod(0o600)
@@ -157,6 +168,8 @@ class Smoke:
         profile = self.applied()
         self.api(f'profiles/{self.pid}', 'PATCH', {'document': profile['document']}, 1, status=409)
         print('PASS two-node enrollment, real readiness, conflict protection', flush=True)
+        self.prepare_pool()
+        profile = self.applied()
         revisions = {n['id']: n['applied_revision'] for n in profile['nodes']}
         started = [self.read(n, '/v1/system/info')['process_started_at_epoch_secs'] for n in self.nodes]
         self.api(certificate_path, 'POST', {'fullchain': (self.path / 'renewed.pem').read_text(), 'private_key': (self.path / 'node.key').read_text()}, status=400)
@@ -179,6 +192,7 @@ class Smoke:
         assert all(all(u['username'] != 'bob' for u in self.read(n, '/v1/users')) for n in self.nodes)
         assert links == self.api(f'profiles/{self.pid}/links', 'POST', {})
         print('PASS shared user rollout and rollback preserving original client links', flush=True)
+        self.check_endpoints()
         self.compose('a.yml', 'exec', '-T', 'node', 'sh', '-c', 'printf "\\n# Local drift fixture\\n" >> /var/lib/telemt-managed/telemt.toml')
         wait_for(lambda: any(n['id'] == self.nodes[0] and n['status'] == 'drift' for n in self.profile()['nodes']), 'Local drift was not reported')
         self.api(f'nodes/{self.nodes[0]}/redeploy', 'POST', {})
@@ -195,6 +209,54 @@ class Smoke:
         wait_for(self.health, 'Fleet did not recover')
         self.applied()
         print('ALL MANAGED COMPOSE CHECKS PASSED', flush=True)
+
+    def prepare_pool(self):
+        node = self.nodes[0]
+        group = str(uuid.uuid4())
+        compatibility = self.read(node, '/v1/fleet/compatibility')
+        document = {'domain': 'node.test', 'sni': 'node.test', 'port': 8443, 'profile_id': self.pid, 'node_ids': self.nodes, 'configuration_verified': True, 'fingerprint': compatibility['fingerprint'], 'zone_id': '0' * 32, 'record_a_id': 'a' * 32}
+        # Only DNS enrollment is seeded: the local fixture must never call a real DNS provider.
+        sql = "INSERT INTO failover_groups(id,name,document,token_cipher,active_node) VALUES ('" + group + "','Local pool test',$fixture$" + json.dumps(document) + "$fixture$::jsonb,'','" + node + "');"
+        subprocess.run(['docker', 'compose', '-f', str(self.path / 'fleet.json'), 'exec', '-T', 'postgres', 'psql', '-v', 'ON_ERROR_STOP=1', '-U', 'telemt', '-d', 'telemt'], input=sql, text=True, check=True, stdout=subprocess.DEVNULL)
+        pool = self.api('ip-pools', 'POST', {'name': 'Two interfaces', 'node_id': node, 'group_id': group, 'addresses': [self.args.subnet + '.10', self.reserve_ip]})
+        preview = self.api('ip-pools/' + pool['id'] + '/preview')
+        revisions = {n['id']: n['applied_revision'] for n in self.profile()['nodes']}
+        self.api('ip-pools/' + pool['id'] + '/prepare', 'POST', {'revision': preview['inventory']['revision']})
+        wait_for(lambda: any(n['id'] == node and n['status'] == 'applied' and n['applied_revision'] > revisions[node] for n in self.profile()['nodes']), 'Multi-IP deployment was not acknowledged')
+        self.check_endpoints()
+        print('PASS assigned-interface pool deployment and WEB sessions on both IPs', flush=True)
+
+    def check_endpoints(self):
+        config = self.compose('a.yml', 'exec', '-T', 'node', 'cat', '/var/lib/telemt-managed/telemt.toml', capture=True)
+        assert self.reserve_ip in config
+        links = self.api(f'profiles/{self.pid}/links', 'POST', {})
+        secret = urllib.parse.parse_qs(urllib.parse.urlparse(links[0]['web']).query)['secret'][0]
+        capability = base64.urlsafe_b64encode(hmac.new(bytes.fromhex(secret), b'tdesktop-web-proxy-bridge-v1\nnode.test', hashlib.sha256).digest()).decode().rstrip('=')
+        fixture = {'ips': [self.args.subnet + '.10', self.reserve_ip], 'capability': capability}
+        (self.path / 'endpoints.json').write_text(json.dumps(fixture))
+        (self.path / 'endpoints.js').write_text(r"""
+const https = require('https'), fs = require('fs'), net = require('net'), assert = require('assert');
+const fixture = JSON.parse(fs.readFileSync('/fixtures/endpoints.json'));
+const ca = fs.readFileSync('/fixtures/ca.pem');
+function request(ip, path, method='GET', headers={}, body) {
+  return new Promise((resolve, reject) => {
+    const req = https.request({hostname:ip, servername:'node.test', port:443, path, method, ca, headers:{host:'node.test', ...(body ? {'content-length':body.length} : method==='DELETE' ? {'content-length':0} : {}), ...headers}, timeout:5000}, res => {
+      const chunks=[]; let size=0; res.on('data', chunk=>{size+=chunk.length;if(size>65536)req.destroy(new Error('response too large'));else chunks.push(chunk)});
+      res.on('end', ()=>resolve({status:res.statusCode, headers:res.headers, body:Buffer.concat(chunks)}));res.on('error',reject);
+    });req.on('timeout',()=>req.destroy(new Error('timeout')));req.on('error',reject);req.end(body);
+  });
+}
+(async()=>{for(const ip of fixture.ips) {
+  await new Promise((resolve,reject)=>{const s=net.connect({host:ip,port:8443},()=>{s.destroy();resolve()});s.setTimeout(5000,()=>s.destroy(new Error('native listener timeout')));s.on('error',reject)});
+  const recovery=await request(ip,'/?bridge='+fixture.capability,'GET',{accept:'application/vnd.telemt.web-recovery+json'});
+  assert.equal(recovery.status,200);const data=JSON.parse(recovery.body);
+  const session=await request(ip,'/api/v1/session','POST',{'authorization':'Bearer '+data.bootstrap,'content-type':'application/octet-stream',...(data.negotiation?.enabled ? {'x-carrier-capabilities':'https','x-carrier-attempt':'1'} : {})},Buffer.from([0x10,0,0,0,0,0,0,1,1]));
+  assert.equal(session.status,200);assert(session.headers['x-session-token']);
+  await request(ip,'/api/v1/session','DELETE',{'authorization':'Bearer '+session.headers['x-session-token']});
+}})().catch(error=>{console.error(error);process.exitCode=1});
+""")
+        container = self.compose('a.yml', 'ps', '-q', 'node', capture=True).strip()
+        command('docker', 'run', '--rm', '--network', 'container:' + container, '-v', str(self.path) + ':/fixtures:ro', 'node:22-bookworm-slim', 'node', '/fixtures/endpoints.js')
 
     def node_health(self, filename):
         try:

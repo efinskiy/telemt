@@ -27,6 +27,8 @@ pub struct Bundle {
     pub domain: String,
     /// Assigned local address used for the exact public endpoint tuple.
     pub public_ip: String,
+    /// Complete staged endpoint set, verified before deployment acknowledgement.
+    pub public_ips: Vec<String>,
     /// Complete validated telemt configuration.
     pub config: String,
     /// Complete nginx configuration with the bundle directory substitution marker.
@@ -49,7 +51,6 @@ impl Bundle {
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Command {
     /// Durable identity used to correlate delivery and acknowledgment.
-    /// Durable identity used to correlate delivery and acknowledgment.
     pub id: String,
     /// Allowlisted HTTP method for the local Control API.
     pub method: String,
@@ -63,7 +64,6 @@ pub struct Command {
 /// Replaying this receipt is safe; replaying its command after an uncertain mutation is not.
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Receipt {
-    /// Durable identity used to correlate delivery and acknowledgment.
     /// Durable identity used to correlate delivery and acknowledgment.
     pub id: String,
     /// HTTP result status; uncertain execution is reported explicitly.

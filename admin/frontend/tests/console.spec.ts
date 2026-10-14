@@ -3,7 +3,7 @@ const first = '11111111-1111-4111-8111-111111111111';
 const second = '22222222-2222-4222-8222-222222222222';
 async function fixture(page: Page, role: 'owner' | 'operator' | 'viewer') {
   const config = { shaping: { enabled: true, up_bps: 100000000, down_bps: 100000000, priority_percent: 25, bulk_enter_bytes: 262144, bulk_exit_bytes: 65536, max_ips: 32768 } };
-  const nodes = [first, second].map((id, index) => ({ id, name: index ? 'Reserve' : 'Primary', api_url: `http://10.0.0.${index + 2}:9091/`, document: { ipv4: `192.0.2.${index + 1}`, ipv6: '', port: 443, sni: 'example.org', probe_dc: 2 }, enabled: true, collected_at: new Date().toISOString(), snapshot: { ready: true, management: 'reachable', upload_bps: 1000000, download_bps: 5000000, shaping: config.shaping } }));
+  const nodes = [first, second].map((id, index) => ({ id, name: index ? 'Reserve' : 'Primary', api_url: 'managed://local', document: { managed: true, ipv4: `192.0.2.${index + 1}`, ipv6: '', port: 443, sni: 'example.org', probe_dc: 2 }, enabled: true, collected_at: new Date().toISOString(), snapshot: { ready: true, management: 'reachable', upload_bps: 1000000, download_bps: 5000000, shaping: config.shaping } }));
   await page.route('**/api/**', async route => {
     const url = new URL(route.request().url()); let data: unknown = [];
     const path = url.pathname;
@@ -34,7 +34,7 @@ test('owner dashboard and all sections render without browser errors', async ({ 
   for (const name of ['Серверы', 'Общие профили', 'Сертификаты', 'Пользователи', 'Конфигурация', 'Шейпер', 'Диагностика', 'Внешние проверки', 'Переключение DNS', 'Ротация IP', 'Операции', 'Аудит', 'Администраторы']) {
     await page.getByRole('navigation').getByRole('button', { name, exact: true }).click(); await expect(page.getByRole('heading', { name, exact: true, level: 1 })).toBeVisible();
     await expect(page.getByRole('combobox', { name: 'Просматриваемый сервер' })).toHaveCount(['Пользователи', 'Конфигурация', 'Шейпер', 'Диагностика'].includes(name) ? 1 : 0);
-    await expect(page.getByText('Серверы для изменений')).toHaveCount(['Пользователи', 'Конфигурация', 'Шейпер'].includes(name) ? 1 : 0);
+    await expect(page.getByText('Серверы для изменений')).toHaveCount(0);
   }
   expect(errors).toEqual([]);
   await page.getByRole('navigation').getByRole('button', { name: 'Обзор', exact: true }).click();
@@ -49,20 +49,8 @@ test('viewer has no write controls or secret links', async ({ page }) => {
   await expect(page.getByRole('button', { name: 'Создать пользователя' })).toHaveCount(0);
   await page.getByRole('button', { name: 'Подробнее', exact: true }).click();
   await expect(page.locator('a[href^="tg://"]')).toHaveCount(0);
-  await expect(page.getByRole('dialog').getByRole('button', { name: 'Сохранить', exact: true })).toBeDisabled();
+  await expect(page.getByRole('dialog').getByRole('button', { name: 'Сохранить', exact: true })).toHaveCount(0);
   await page.keyboard.press('Escape'); await expect(page.getByRole('dialog')).toHaveCount(0);
-});
-
-test('shaping writes contain revision without connection churn, never an optimistic success', async ({ page }) => {
-  await fixture(page, 'operator');
-  await page.getByRole('navigation').getByRole('button', { name: 'Шейпер', exact: true }).click();
-  await page.getByLabel('Доступный канал к клиентам (бит/с)').fill('50000000');
-  const request = page.waitForRequest(request => request.url().endsWith('/api/operations') && request.method() === 'POST');
-  await page.getByRole('button', { name: 'Применить политику шейпера' }).click();
-  const body = (await request).postDataJSON();
-  expect(body.revisions[first]).toBe('revision-fixture'); expect(body.path).toBe('/v1/config'); expect(body.body.shaping.down_bps).toBe(50000000);
-  await expect(page.getByRole('status')).toContainText('поставлена в очередь');
-  await expect(page.getByRole('status')).not.toContainText('Завершено');
 });
 
 test('mobile cabinet stays inside viewport', async ({ page }, testInfo) => {
@@ -72,21 +60,10 @@ test('mobile cabinet stays inside viewport', async ({ page }, testInfo) => {
   await page.screenshot({ path: testInfo.outputPath('telemt-console-mobile.png'), fullPage: true });
 });
 
-test('shaping form retains its displayed revision across later configuration changes', async ({ page }) => {
-  await fixture(page, 'operator'); await page.getByRole('navigation').getByRole('button', { name: 'Шейпер', exact: true }).click();
-  await expect(page.getByText('Сохранённая ревизия: revision-fixture')).toBeVisible();
-  await page.route('**/api/nodes/*/read*', async route => {
-    if (new URL(route.request().url()).searchParams.get('path') === '/v1/config') await route.fulfill({ json: { ok: true, data: { status: 200, response: { ok: true, data: { shaping: { enabled: false } }, revision: 'newer-revision' } } } });
-    else await route.fallback();
-  });
-  const sent = page.waitForRequest(request => request.url().endsWith('/api/operations') && request.method() === 'POST');
-  await page.getByRole('button', { name: 'Применить политику шейпера' }).click(); expect((await sent).postDataJSON().revisions[first]).toBe('revision-fixture');
-});
-
 test('WEB commands use the inspected process identity and one server target', async ({ page }) => {
   await fixture(page, 'operator');
   await page.getByRole('navigation').getByRole('button', { name: 'Шейпер', exact: true }).click();
-  await page.getByLabel('Reserve', { exact: true }).check();
+  await expect(page.getByText('Серверы для изменений')).toHaveCount(0);
   await page.getByRole('navigation').getByRole('button', { name: 'Диагностика', exact: true }).click(); await page.getByRole('button', { name: 'Состояние WEB', exact: true }).click();
   const sent = page.waitForRequest(request => request.url().endsWith('/api/operations') && request.method() === 'POST');
   await page.getByRole('button', { name: 'Приостановить новые WEB-сессии' }).click(); const body = (await sent).postDataJSON();
@@ -120,29 +97,15 @@ test('assigned IP pool creation defaults off and cannot select a local unusable 
   await expect(page.getByRole('dialog').getByText('Авторотация: выключена.', { exact: false })).toBeVisible();
 });
 
-test('bulk caps are independently configurable with the displayed revision', async ({ page }) => {
-  await fixture(page, 'operator');
-  await page.getByRole('navigation').getByRole('button', { name: 'Шейпер', exact: true }).click();
-  await page.getByLabel('Бюджет объёмной отправки при конкуренции (бит/с)', { exact: true }).fill('10000000');
-  await page.getByLabel('Бюджет объёмной загрузки при конкуренции (бит/с)', { exact: true }).fill('20000000');
-  const sent = page.waitForRequest(request => request.url().endsWith('/api/operations') && request.method() === 'POST');
-  await page.getByRole('button', { name: 'Применить политику шейпера' }).click();
-  const body = (await sent).postDataJSON();
-  expect(body.revisions[first]).toBe('revision-fixture');
-  expect(body.body.shaping.bulk_up_bps).toBe(10000000);
-  expect(body.body.shaping.bulk_down_bps).toBe(20000000);
-});
-
-test('owner can submit a public hostname as the Control API URL', async ({ page }) => {
+test('node deletion is one cascade action and direct registration is absent', async ({ page }) => {
   await fixture(page, 'owner');
   await page.getByRole('navigation').getByRole('button', { name: 'Серверы', exact: true }).click();
-  await page.getByRole('button', { name: 'Подключить существующий API', exact: true }).click();
-  await page.getByLabel('Название сервера', { exact: true }).fill('Public node');
-  await page.getByLabel('Адрес API управления', { exact: true }).fill('https://node-api.example.org:9443/');
-  await page.getByLabel('Домен FakeTLS (SNI)', { exact: true }).fill('example.org');
-  const sent = page.waitForRequest(request => request.url().endsWith('/api/nodes') && request.method() === 'POST');
-  await page.getByRole('dialog').getByRole('button', { name: 'Сохранить', exact: true }).click();
-  expect((await sent).postDataJSON().api_url).toBe('https://node-api.example.org:9443/');
+  await expect(page.getByRole('button', { name: 'Подключить существующий API' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Добавить сервер', exact: true })).toBeVisible();
+  page.once('dialog', async dialog => { expect(dialog.message()).toContain('все его зависимости'); expect(dialog.message()).toContain('сертификаты сохранятся'); await dialog.accept(); });
+  const sent=page.waitForRequest(request=>request.method()==='DELETE');
+  await page.getByRole('article', {name:'Сервер Primary',exact:true}).getByRole('button',{name:'Удалить',exact:true}).click();
+  expect((await sent).url()).toContain(`/api/nodes/${first}`);
 });
 
 test('Users identifies a Fleet HTML gateway error and recovers after the route is restored', async ({ page }) => {
@@ -152,33 +115,24 @@ test('Users identifies a Fleet HTML gateway error and recovers after the route i
   await page.getByRole('navigation').getByRole('button', { name: 'Пользователи', exact: true }).click();
   await expect(page.locator('.error')).toContainText('API Fleet вернул ответ не в формате JSON (HTTP 502)');
   await expect(page.locator('.error')).toContainText('обратный прокси');
-  await expect(page.getByRole('button', { name: 'Создать пользователя', exact: true })).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'Создать пользователя', exact: true })).toHaveCount(0);
   await expect(page.getByText('private-response-detail')).toHaveCount(0);
   await page.unroute('**/api/nodes/*/read*');
-  await expect(page.getByRole('button', { name: 'Создать пользователя', exact: true })).toBeEnabled({ timeout: 10000 });
+  await expect(page.getByRole('row').filter({hasText:'alice'})).toBeVisible({timeout:10000});
   await expect(page.locator('.error')).toHaveCount(0);
   expect(errors).toEqual([]);
 });
 
-test('field configuration submits a sparse patch and retains the draft on conflict', async ({ page }) => {
-  await fixture(page, 'operator');
-  await page.route('**/api/nodes/*/read*', async route => {
-    if (new URL(route.request().url()).searchParams.get('path') === '/v1/config') await route.fulfill({ json: {ok:true,data:{status:200,response:{ok:true,revision:'config-before',data:{general:{log_level:'normal',me_pool_min_fresh_ratio:1,telemetry:{user_enabled:false}},server:{listeners:[]},censorship:{tls_fetch:{profiles:[]}},web:{carriers:false,vhosts:[]}}}}} }); else await route.fallback();
-  });
+test('node configuration and shaping cannot bypass shared profile ownership', async ({ page }) => {
+  await fixture(page,'owner');
+  const writes:string[]=[];page.on('request',request=>{if(request.method()!=='GET')writes.push(request.url());});
   await page.getByRole('navigation').getByRole('button',{name:'Конфигурация',exact:true}).click();
-  await expect(page.locator('textarea')).toHaveCount(0);
-  await page.getByLabel('Уровень журналирования',{exact:true}).selectOption('debug');
-  await page.getByLabel('Минимальная доля нового пула',{exact:true}).fill('0.5');
-  const sent = page.waitForRequest(request => request.url().endsWith('/api/operations') && request.method() === 'POST');
-  await page.route('**/api/operations', async route => { if(route.request().method()==='POST') await route.fulfill({status:409,json:{ok:false,error:{code:'revision_mismatch'}}}); else await route.fallback(); });
-  await page.getByRole('button',{name:'Сохранить и применить с завершением сессий'}).click();
-  const body = (await sent).postDataJSON();
-  expect(body.body).toEqual({general:{log_level:'debug',me_pool_min_fresh_ratio:0.5}}); expect(body.revisions[first]).toBe('config-before');
-  await expect(page.getByRole('alert')).toContainText('revision_mismatch');
-  await expect(page.getByLabel('Уровень журналирования',{exact:true})).toHaveValue('debug');
-  await expect(page.getByLabel('Минимальная доля нового пула',{exact:true})).toHaveValue('0.5');
-  await page.getByLabel('Минимальная доля нового пула',{exact:true}).fill('');
-  expect(await page.getByLabel('Минимальная доля нового пула',{exact:true}).evaluate((el: HTMLInputElement) => el.validity.valid)).toBe(false);
+  await expect(page.getByText('Ревизия: revision-fixture',{exact:true})).toBeVisible();
+  await expect(page.locator('section input,section textarea')).toHaveCount(0);
+  await page.getByRole('navigation').getByRole('button',{name:'Шейпер',exact:true}).click();
+  await expect(page.getByRole('heading',{name:'Политика шейпера'})).toBeVisible();
+  await expect(page.getByRole('button',{name:'Применить политику шейпера'})).toHaveCount(0);
+  expect(writes).toEqual([]);
 });
 
 test('shaping distinguishes shared-IP users, real waits and unavailable lifetime telemetry', async ({ page }, testInfo) => {
@@ -194,7 +148,7 @@ test('shaping distinguishes shared-IP users, real waits and unavailable lifetime
   const alice = page.getByRole('row').filter({hasText:'alice'}), bob = page.getByRole('row').filter({hasText:'bob'});
   await expect(alice).toContainText('Ожидает бюджета'); await expect(bob).not.toContainText('Ожидает бюджета');
   await expect(alice).toContainText('250'); await expect(alice).toContainText('Телеметрия отключена');
-  await expect(page.getByRole('button',{name:'Применить политику шейпера'})).toBeDisabled();
+  await expect(page.getByRole('button',{name:'Применить политику шейпера'})).toHaveCount(0);
   await page.screenshot({path:testInfo.outputPath('telemt-ru-shaping.png'),fullPage:true});
 });
 
@@ -221,19 +175,9 @@ test('overview uses selected node history and renders Russian charts on mobile',
   await page.route('**/api/nodes/*/history', async route => route.fulfill({json:{ok:true,data:Array.from({length:12},(_,index)=>({at:new Date(Date.now()-(11-index)*60000).toISOString(),snapshot:{upload_bps:index===4?null:1000000*(index+1),download_bps:5000000*(index+1),traffic:{active_users:index+2,current_connections:(index+2)*5}}}))}}));
   await page.getByLabel('Просматриваемый сервер',{exact:true}).selectOption(second);
   await expect(page.getByRole('img',{name:/Скорость трафика/})).toBeVisible();
-  await expect(page.getByRole('img',{name:/Пользователи и соединения/})).toBeVisible();
+  await expect(page.getByRole('img',{name:/IP-клиенты и соединения/})).toBeVisible();
   expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
   await page.screenshot({path:testInfo.outputPath('telemt-ru-charts-mobile.png'),fullPage:true});
-});
-
-test('explicit shaping reload resets edits even when the revision is unchanged', async ({page}) => {
-  await fixture(page,'operator');
-  await page.getByRole('navigation').getByRole('button',{name:'Шейпер',exact:true}).click();
-  const field = page.getByLabel('Доступный канал к клиентам (бит/с)',{exact:true});
-  await field.fill('123456');
-  page.once('dialog',dialog=>dialog.accept());
-  await page.getByRole('button',{name:'Загрузить сохранённую политику',exact:true}).click();
-  await expect(field).toHaveValue('100000000');
 });
 
 test('DNS creation uses described fields and preserves selected members and record families', async ({page}) => {
@@ -306,7 +250,7 @@ test('redesign desktop themes and sidebar preferences persist', async ({ page },
   await page.screenshot({ path: testInfo.outputPath('telemt-redesign-dark.png'), fullPage: true });
   await page.getByRole('navigation').getByRole('button', { name: 'Шейпер', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Политика шейпера' })).toBeVisible();
-  await expect(page.getByText('Серверы для изменений')).toBeVisible();
+  await expect(page.getByText('Серверы для изменений')).toHaveCount(0);
   await page.screenshot({ path: testInfo.outputPath('telemt-redesign-shaping.png'), fullPage: true });
   await page.getByRole('combobox', { name: 'Тема оформления' }).selectOption('system');
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
@@ -323,9 +267,9 @@ test('redesign mobile dock reaches secondary pages and keeps dialogs usable', as
   await expect(page.getByRole('dialog')).toHaveCount(0);
   await page.screenshot({ path: testInfo.outputPath('telemt-redesign-mobile.png'), fullPage: true });
   await page.getByRole('navigation').getByRole('button', { name: 'Серверы', exact: true }).click();
-  await page.getByRole('button', { name: 'Подключить существующий API', exact: true }).click();
+  await page.getByRole('button', { name: 'Добавить сервер', exact: true }).click();
   await expect(page.getByRole('dialog')).toBeVisible();
-  await expect(page.getByRole('dialog').getByRole('button', { name: 'Сохранить', exact: true })).toBeEnabled();
+  await expect(page.getByRole('dialog').getByRole('button', { name: 'Далее', exact: true })).toBeDisabled();
   await page.screenshot({ path: testInfo.outputPath('telemt-redesign-mobile-form.png'), fullPage: true });
   await page.getByRole('button', { name: 'Закрыть окно' }).click();
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
@@ -345,16 +289,6 @@ test('sustained IP policy exposes separate idle caps and recovery state', async 
   await page.getByRole('navigation').getByRole('button', { name: 'Шейпер', exact: true }).click();
   await expect(page.getByText('Ограничен · восстановление 3 с', { exact: false })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Системные очереди Linux' })).toBeVisible();
-  await page.getByLabel('Бюджет объёмной загрузки при конкуренции (бит/с)', { exact: true }).fill('20000000');
-  await page.getByLabel('Потолок объёмной загрузки при свободном канале (бит/с)', { exact: true }).fill('60000000');
-  await page.getByLabel('Скорость длительной нагрузки IP (бит/с)', { exact: true }).fill('2000000');
-  await page.getByLabel('Длительность высокой нагрузки IP (с)', { exact: true }).fill('12');
-  await page.getByLabel('Объём длительной нагрузки IP за минуту (байт)', { exact: true }).fill('16777216');
-  await page.getByLabel('Время восстановления IP (с)', { exact: true }).fill('30');
-  await page.getByLabel('Приоритет соединений основного DC', { exact: true }).check();
-  const sent = page.waitForRequest(request => request.url().endsWith('/api/operations') && request.method() === 'POST');
-  await page.getByRole('button', { name: 'Применить политику шейпера' }).click();
-  const body = (await sent).postDataJSON();
-  expect(body.revisions[first]).toBe('revision-fixture');
-  expect(body.body.shaping).toMatchObject({ bulk_idle_down_bps: 60000000, sustained_rate_bps: 2000000, sustained_secs: 12, sustained_min_bytes: 16777216, sustained_recovery_secs: 30, main_dc_priority: true });
+  await expect(page.getByText('Потолок объёмного получения без конкуренции, бит/с',{exact:true})).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Применить политику шейпера' })).toHaveCount(0);
 });

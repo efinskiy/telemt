@@ -1,7 +1,7 @@
 import { errorLabel } from './labels';
 export type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
 export type User = { id: string; username: string; role: 'owner' | 'operator' | 'viewer' };
-export type Node = { id: string; name: string; api_url: string; document: Record<string, Json>; snapshot: Record<string, Json>; collected_at: string | null; enabled: boolean };
+export type Node = { id: string; name: string; document: Record<string, Json>; snapshot: Record<string, Json>; collected_at: string | null; enabled: boolean };
 export type Operation = { id: string; state: string; results: Json[]; created_at: string; updated_at: string };
 export type Group = { id: string; name: string; active_node: string; automatic: boolean; status: string; document: Record<string, Json>; observed: Json };
 let csrf = '';

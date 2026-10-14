@@ -186,6 +186,13 @@ IPs, committed directional bytes, wait/refusal counters, calculation age and IP
 window/rate/class/grants. Limit is 1..1,000, offset at most 131,072. Existing node
 metrics include aggregate `telemt_shaping_*` values. `GET /v1/fleet/traffic`
 provides counters and their availability when per-user telemetry is disabled;
+it also includes `active_ips` from authenticated admission state, deduplicated
+across accounts on that node. `active_ips_incomplete` marks bounded/truncated
+observations or pending disconnect cleanup. These fields do not depend on the
+shaper or user telemetry. Fleet sums per-node counts, not globally unique IPs.
+Traffic totals cover each node's current counter lifetime, not a calendar period.
+The UI excludes stale or unreachable nodes and shows measurement coverage.
+Update nodes as well as Fleet to populate IP counts; older snapshots show no data.
 `GET /v1/fleet/compatibility` provides a secret-free fingerprint of users,
 enabled state, modes, effective listener ports/transports and TLS domains.
 

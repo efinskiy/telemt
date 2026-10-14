@@ -275,6 +275,19 @@ pub(super) fn matching_profile(
     runtime
         .profiles
         .iter()
+        .chain(
+            runtime
+                .vhosts
+                .get(&expected.host)
+                .into_iter()
+                .flat_map(|vhost| {
+                    vhost
+                        .endpoint_profiles
+                        .get(&expected.public_addr)
+                        .into_iter()
+                        .flatten()
+                }),
+        )
         .find(|profile| {
             profile.host == expected.host
                 && profile.public_addr == expected.public_addr

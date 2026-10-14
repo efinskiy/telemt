@@ -21,6 +21,18 @@ pub(super) fn validate_vhosts(config: &mut ProxyConfig) -> Result<()> {
                 "web.vhosts[{vhost_idx}].public_addr must be a concrete socket address on port 443"
             ));
         }
+        let unique_endpoints: HashSet<_> = vhost.public_addrs.iter().collect();
+        if vhost.public_addrs.len() > 8
+            || unique_endpoints.len() != vhost.public_addrs.len()
+            || vhost.public_addrs.iter().any(|addr| {
+                addr.port() != 443 || addr.ip().is_unspecified() || addr.ip().is_multicast()
+            })
+            || (!vhost.public_addrs.is_empty() && !vhost.public_addrs.contains(&vhost.public_addr))
+        {
+            return config_error(
+                "WEB public_addrs must contain at most eight unique concrete HTTPS endpoints, including public_addr",
+            );
+        }
         if config.web.enabled && vhost.profiles.is_empty() {
             return config_error(&format!(
                 "web.vhosts[{vhost_idx}].profiles must be non-empty when web.enabled=true"

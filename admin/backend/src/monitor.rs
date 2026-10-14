@@ -30,7 +30,7 @@ pub(crate) async fn collect(state:&State)->anyhow::Result<()> {
         overview_rates(&mut snapshot, &previous, seconds);
         snapshot=redact(snapshot);
         let mut tx=state.db.begin().await?;
-        sqlx::query("UPDATE nodes SET snapshot=$2,collected_at=$3 WHERE id=$1").bind(id).bind(&snapshot).bind(now).execute(&mut *tx).await?;
+        if sqlx::query("UPDATE nodes SET snapshot=$2,collected_at=$3 WHERE id=$1").bind(id).bind(&snapshot).bind(now).execute(&mut *tx).await?.rows_affected()==0 {return Ok(());}
         sqlx::query("INSERT INTO node_history(node_id,snapshot) VALUES($1,$2)").bind(id).bind(&snapshot).execute(&mut *tx).await?;
         let old:Option<Value>=sqlx::query_scalar("SELECT snapshot FROM minute_history WHERE node_id=$1 AND minute=date_trunc('minute',now()) FOR UPDATE").bind(id).fetch_optional(&mut *tx).await?;
         let mut aggregate=snapshot.clone();aggregate["samples"]=json!(old.as_ref().and_then(|v|v["samples"].as_u64()).unwrap_or(0)+1);
