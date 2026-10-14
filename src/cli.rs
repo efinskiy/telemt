@@ -40,6 +40,8 @@ pub enum Subcommand {
     Status,
     /// Run health probe and exit with status code.
     Healthcheck,
+    /// Validate the complete configuration without opening listeners.
+    CheckConfig,
     /// Fire-and-forget setup (`--init`).
     Init,
 }
@@ -113,6 +115,9 @@ pub fn parse_command(args: &[String]) -> ParsedCommand {
             "status" => {
                 cmd.subcommand = Subcommand::Status;
             }
+            "check-config" => {
+                cmd.subcommand = Subcommand::CheckConfig;
+            }
             "healthcheck" => {
                 cmd.subcommand = Subcommand::Healthcheck;
             }
@@ -136,7 +141,7 @@ pub fn parse_command(args: &[String]) -> ParsedCommand {
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
-            "start" | "stop" | "reload" | "status" | "run" | "healthcheck" => {}
+            "start" | "stop" | "reload" | "status" | "run" | "healthcheck" | "check-config" => {}
             #[cfg(unix)]
             "--strict-runtime-paths" => {
                 cmd.daemon_opts.strict_runtime_paths = true;
@@ -215,6 +220,7 @@ pub fn execute_subcommand(cmd: &ParsedCommand) -> Option<i32> {
             &cmd.pid_file,
             cmd.daemon_opts.strict_runtime_paths,
         )),
+        Subcommand::CheckConfig => Some(check_config(&cmd.config_path)),
         Subcommand::Healthcheck => {
             if let Some(invalid_mode) = cmd.healthcheck_mode_invalid.as_ref() {
                 if invalid_mode.is_empty() {
@@ -255,6 +261,7 @@ pub fn execute_subcommand(cmd: &ParsedCommand) -> Option<i32> {
             eprintln!("[telemt] Subcommand not supported on this platform");
             Some(1)
         }
+        Subcommand::CheckConfig => Some(check_config(&cmd.config_path)),
         Subcommand::Healthcheck => {
             if let Some(invalid_mode) = cmd.healthcheck_mode_invalid.as_ref() {
                 if invalid_mode.is_empty() {
@@ -283,5 +290,16 @@ pub fn execute_subcommand(cmd: &ParsedCommand) -> Option<i32> {
             }
         }
         Subcommand::Run | Subcommand::Start => None,
+    }
+}
+
+// Use the full loader, including WEB snapshots and cross-field validation.
+fn check_config(path: &str) -> i32 {
+    match crate::config::ProxyConfig::load(path) {
+        Ok(_) => 0,
+        Err(_) => {
+            eprintln!("configuration validation failed");
+            1
+        }
     }
 }

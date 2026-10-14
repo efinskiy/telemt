@@ -30,6 +30,9 @@ pub(crate) async fn dispatch(ExtractState(state):ExtractState<State>,Path(path):
     let body:Value=if bytes.is_empty(){json!({})}else{serde_json::from_slice(&bytes).map_err(|_|bad())?};
     let parts:Vec<_>=path.split('/').collect();
     match parts.as_slice() {
+        ["profiles",..]=>crate::profiles::route(&state,&user,&parts,&method,&headers,body).await,
+        ["certificates",..]=>crate::certificates::route(&state,&user,&parts,&method,body).await,
+        ["managed-nodes"] | ["nodes",_,"enrollment"|"managed"|"revoke"|"redeploy"|"adopt"]=>crate::managed::route(&state,&user,&parts,&method,body).await,
         ["nodes"] if method==Method::GET => {
             let rows=sqlx::query("SELECT id,name,api_url,document,snapshot,collected_at,enabled FROM nodes ORDER BY name LIMIT 20").fetch_all(&state.db).await?;
             let data:Vec<_>=rows.into_iter().map(|r|json!({"id":r.get::<Uuid,_>("id"),"name":r.get::<String,_>("name"),"api_url":r.get::<String,_>("api_url"),"document":r.get::<Value,_>("document"),"snapshot":redact(r.get("snapshot")),"collected_at":r.get::<Option<chrono::DateTime<chrono::Utc>>,_>("collected_at"),"enabled":r.get::<bool,_>("enabled")})).collect(); Ok(Json(ok(json!(data))))
@@ -37,6 +40,7 @@ pub(crate) async fn dispatch(ExtractState(state):ExtractState<State>,Path(path):
         ["nodes"] if method==Method::POST => { user.require("owner")?; save_node(&state,&user,None,body).await }
         ["nodes",id] if method==Method::PATCH => {
             user.require("owner")?;let id=parse_id(id)?;
+            if node(&state,id).await?.get::<Value,_>("document")["managed"]==true{return Err(crate::error::ApiError(axum::http::StatusCode::CONFLICT,"managed_profile_owned"));}
             if body.as_object().is_some_and(|body|body.len()==1&&body.contains_key("enabled")) {
                 node(&state,id).await?;let enabled=body["enabled"].as_bool().ok_or_else(bad)?;let mut tx=state.db.begin().await?;
                 sqlx::query("SELECT pg_advisory_xact_lock($1)").bind(crate::state::DNS_COORDINATOR_LOCK).execute(&mut *tx).await?;
@@ -68,7 +72,7 @@ pub(crate) async fn dispatch(ExtractState(state):ExtractState<State>,Path(path):
             let verb=field(&body,"method")?;let path=field(&body,"path")?;
             if nodes.is_empty()||nodes.len()>20||!control_path(path,verb)||verb=="GET"{return Err(bad());}
             let mut ids=std::collections::HashSet::new();
-            for id in nodes {let id=parse_id(id.as_str().ok_or_else(bad)?)?; if !ids.insert(id){return Err(bad());} node(&state,id).await?;
+            for id in nodes {let id=parse_id(id.as_str().ok_or_else(bad)?)?; if !ids.insert(id){return Err(bad());} let target=node(&state,id).await?;if target.get::<Value,_>("document")["managed"]==true&&!telemt_managed::allowed_command(verb,path){return Err(crate::error::ApiError(axum::http::StatusCode::CONFLICT,"managed_profile_owned"));}
                 if body.pointer(&format!("/revisions/{id}")).and_then(Value::as_str).is_none(){return Err(bad());}
             }
             let mut tx=state.db.begin().await?;sqlx::query("SELECT pg_advisory_xact_lock($1)").bind(crate::state::DNS_COORDINATOR_LOCK).execute(&mut *tx).await?;

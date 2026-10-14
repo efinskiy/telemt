@@ -10,6 +10,9 @@ mod operations;
 mod probes;
 mod routes;
 mod rotation;
+mod profiles;
+mod certificates;
+mod managed;
 mod state;
 use axum::{Router,body::Body,extract::{State as ExtractState,DefaultBodyLimit},http::{Request,StatusCode,header},middleware::{self,Next},response::Response,routing::{get,post,any}};
 use state::State;
@@ -70,11 +73,11 @@ async fn main()->anyhow::Result<()> {
     }
     operations::recover(&state).await?;
     let cancel=CancellationToken::new();let mut tasks=tokio::task::JoinSet::new();
-    for (name,period) in [("monitor",5),("operations",1),("probes",15),("dns",15),("rotation",5),("retention",60)] {
+    for (name,period) in [("monitor",5),("operations",1),("probes",15),("dns",15),("rotation",5),("retention",60),("profiles",5),("certificates",60)] {
         let state=state.clone();let cancel=cancel.clone();tasks.spawn(async move{
             let mut interval=tokio::time::interval(Duration::from_secs(period));interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
             loop{tokio::select!{_ = cancel.cancelled()=>break,_ = interval.tick()=>{}}
-                let result=match name{"monitor"=>monitor::collect(&state).await,"operations"=>operations::tick(&state).await,"probes"=>probes::schedule(&state).await,"dns"=>dns::tick(&state).await,"rotation"=>rotation::tick(&state).await,_=>monitor::retention(&state).await};
+                let result=match name{"monitor"=>monitor::collect(&state).await,"operations"=>operations::tick(&state).await,"probes"=>probes::schedule(&state).await,"dns"=>dns::tick(&state).await,"rotation"=>rotation::tick(&state).await,"profiles"=>profiles::tick(&state).await,"certificates"=>certificates::tick(&state).await,_=>monitor::retention(&state).await};
                 if result.is_err(){tracing::warn!(component=name,"control task failed; retrying next bounded interval");}
             }
         });
@@ -92,6 +95,7 @@ async fn main()->anyhow::Result<()> {
 
 fn application(state:State)->Router {
     Router::new().route("/api/login",post(auth::login)).route("/api/session",get(auth::current)).route("/api/logout",post(auth::logout))
+        .route("/node-agent/v1/{action}",post(managed::agent))
         .route("/api/{*path}",any(routes::dispatch)).route("/agent/jobs",get(probes::jobs)).route("/agent/results",post(probes::result)).fallback(assets)
         .layer(DefaultBodyLimit::max(1024*1024)).layer(middleware::from_fn(security)).with_state(state)
 

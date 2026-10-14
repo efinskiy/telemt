@@ -269,3 +269,5 @@ footer b { font-weight: 400; opacity: .6; margin-left: 4px; }
   .history-chart text { font-size: 19px; }
 }
 @media (prefers-reduced-motion:reduce) { button { transition: none; } }
+
+.compose-output { max-height: 55vh; overflow: auto; white-space: pre; padding: 1rem; background: var(--bg); border: 1px solid var(--border); border-radius: 10px; font-size: .8rem; }

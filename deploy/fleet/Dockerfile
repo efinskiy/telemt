@@ -12,10 +12,14 @@ RUN cargo install cargo-chef --version 0.1.71 --locked
 WORKDIR /build
 
 FROM chef AS admin-plan
+COPY managed/ /build/managed/
+WORKDIR /build/admin/backend
 COPY admin/backend/ ./
 RUN cargo chef prepare --recipe-path /recipe.json --bin telemt-admin
 
 FROM chef AS admin-build
+COPY managed/ /build/managed/
+WORKDIR /build/admin/backend
 COPY --from=admin-plan /recipe.json /recipe.json
 ARG CARGO_BUILD_JOBS
 RUN export CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-$(nproc)}" \
@@ -65,7 +69,9 @@ WORKDIR /app
 USER 10001:10001
 
 FROM runtime AS admin
-COPY --from=admin-build /build/target/release/telemt-admin /app/telemt-admin
+COPY --from=node-build /build/target/release/telemt /app/telemt
+COPY deploy/fleet/managed-public/ /app/public/
+COPY --from=admin-build /build/admin/backend/target/release/telemt-admin /app/telemt-admin
 COPY --from=frontend /build/dist /app/assets
 ENV ADMIN_ASSETS_DIR=/app/assets ADMIN_LISTEN=0.0.0.0:8080
 ENTRYPOINT ["/app/telemt-admin"]
@@ -78,3 +84,37 @@ FROM runtime AS node
 COPY --from=node-build /build/target/release/telemt /app/telemt
 ENTRYPOINT ["/app/telemt"]
 CMD ["/etc/telemt/config.toml"]
+
+FROM chef AS managed-plan
+COPY managed/ /build/managed/
+WORKDIR /build/node-agent
+COPY node-agent/ ./
+RUN cargo chef prepare --recipe-path /recipe.json --bin telemt-node-agent
+
+FROM chef AS managed-build
+COPY managed/ /build/managed/
+WORKDIR /build/node-agent
+COPY --from=managed-plan /recipe.json /recipe.json
+ARG CARGO_BUILD_JOBS
+RUN export CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-$(nproc)}" \
+    && cargo chef cook --release --locked --bin telemt-node-agent --recipe-path /recipe.json
+COPY node-agent/ ./
+RUN export CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-$(nproc)}" \
+    && cargo build --release --locked --bin telemt-node-agent --jobs "$CARGO_BUILD_JOBS"
+
+FROM nginx:1.28-bookworm AS managed-node
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates procps \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=node-build /build/target/release/telemt /app/telemt
+COPY --from=managed-build /build/node-agent/target/release/telemt-node-agent /app/telemt-node-agent
+COPY deploy/fleet/managed-public/ /app/public/
+WORKDIR /var/lib/telemt-managed
+STOPSIGNAL SIGTERM
+ENTRYPOINT ["/app/telemt-node-agent"]
+CMD []
+
+# Explicit verification target; normal node and Fleet images never execute Rust tests.
+FROM agent-build AS probe-tests
+
+FROM node-build AS node-tests
+COPY --from=frontend /usr/local/bin/node /usr/local/bin/node

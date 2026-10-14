@@ -1,7 +1,9 @@
 # Prebuilt Fleet and node images
 
+See [shared profiles and managed-node deployment](MANAGED-NODES.md) for the one-file enrollment wizard, central certificates and upgrades.
+
 The `Fleet images` GitHub Actions workflow builds this checkout on native Linux
-amd64 and arm64 runners. Every push and manual run builds all three images;
+amd64 and arm64 runners. Every push and manual run builds all four images;
 pull requests build without publishing. No production server compiles Rust.
 
 | Service | Image in this repository |
@@ -9,6 +11,7 @@ pull requests build without publishing. No production server compiles Rust.
 | Fleet backend and UI | `ghcr.io/efinskiy/telemt-admin` |
 | Node | `ghcr.io/efinskiy/telemt-node` |
 | Probe | `ghcr.io/efinskiy/telemt-probe` |
+| Managed node with nginx and supervisor | `ghcr.io/efinskiy/telemt-managed-node` |
 
 Each successful publication creates `sha-<full 40-character commit SHA>` tags.
 The default branch also updates `main`. There is no `latest` tag for these
@@ -18,8 +21,8 @@ images. Use the same SHA tag for Fleet and nodes. The original
 ## Enable publication
 
 Commit and push the workflow, Dockerfile and application changes together.
-Previously pushed commits do not acquire images retroactively. Wait for all six
-build jobs and all three manifest jobs in `Fleet images` to succeed before
+Previously pushed commits do not acquire images retroactively. Wait for all eight
+build jobs and all four manifest jobs in `Fleet images` to succeed before
 updating hosts. The run summary gives each published image reference.
 
 Publishing uses the repository's `GITHUB_TOKEN` with `packages: write`; no PAT
@@ -30,8 +33,8 @@ repository visibility alone does not guarantee public packages. Otherwise,
 authenticate on the deployment host with `docker login ghcr.io -u USERNAME`
 using a personal access token (classic) with `read:packages` when prompted. Do not put it into Compose.
 
-A failed architecture build prevents publication of all three commit manifests.
-The three manifest jobs are separate: if publication fails partway through,
+A failed architecture build prevents publication of all four commit manifests.
+The four manifest jobs are separate: if publication fails partway through,
 wait for a successful retry and pin one SHA on all hosts. Rust tests and browser
 checks remain separate CI workflows; a published image is a successful image
 build, not a claim that every independent CI check passed.

@@ -16,10 +16,10 @@ const HANDSHAKE_OFFSET:usize=11;
 const REQ_PQ_MULTI:u32=0xbe7e8ef1;
 const RES_PQ:u32=0x05162463;
 const PADDED_INTERMEDIATE:u32=0xdddddddd;
-type Cipher=Ctr128BE<Aes256>;
+pub(crate) type Cipher=Ctr128BE<Aes256>;
 
-fn random<const N:usize>()->[u8;N]{let mut bytes=[0;N];rand::rng().fill_bytes(&mut bytes);bytes}
-fn hmac(secret:&[u8],bytes:&[u8])->anyhow::Result<[u8;32]>{let mut mac=<Hmac<Sha256> as Mac>::new_from_slice(secret)?;mac.update(bytes);Ok(mac.finalize().into_bytes().into())}
+pub(crate) fn random<const N:usize>()->[u8;N]{let mut bytes=[0;N];rand::rng().fill_bytes(&mut bytes);bytes}
+pub(crate) fn hmac(secret:&[u8],bytes:&[u8])->anyhow::Result<[u8;32]>{let mut mac=<Hmac<Sha256> as Mac>::new_from_slice(secret)?;mac.update(bytes);Ok(mac.finalize().into_bytes().into())}
 fn extension(output:&mut Vec<u8>,kind:u16,bytes:&[u8])->anyhow::Result<()>{output.extend(kind.to_be_bytes());output.extend(u16::try_from(bytes.len())?.to_be_bytes());output.extend(bytes);Ok(())}
 
 pub(crate) fn hello(secret:&[u8],sni:&str)->anyhow::Result<(Vec<u8>,[u8;32])>{
@@ -50,7 +50,7 @@ async fn authenticate(stream:&mut TcpStream,secret:&[u8],sni:&str)->anyhow::Resu
         if application{let mut input=digest.to_vec();input.extend(&response);if bool::from(hmac(secret,&input)?.ct_eq(&received)){return Ok(());}}
     }anyhow::bail!("FakeTLS response authentication failed")
 }
-fn obfuscation(secret:&[u8],dc:i16)->anyhow::Result<([u8;64],Cipher,Cipher)> {
+pub(crate) fn obfuscation(secret:&[u8],dc:i16)->anyhow::Result<([u8;64],Cipher,Cipher)> {
     let mut nonce=random::<64>();let mut valid=false;
     for _ in 0..32 {if ![0xef,0x16,0x17].contains(&nonce[0])&&!nonce[..4].starts_with(b"GET ")&&!nonce[..4].starts_with(b"POST")&&!nonce[..4].starts_with(b"HEAD")&&!nonce[..4].starts_with(b"OPTI")&&nonce[4..8]!=[0;4]{valid=true;break;}nonce=random();}
     anyhow::ensure!(valid,"nonce generation exhausted");
@@ -61,8 +61,8 @@ fn obfuscation(secret:&[u8],dc:i16)->anyhow::Result<([u8;64],Cipher,Cipher)> {
     let mut encrypted=nonce;tx.apply_keystream(&mut encrypted);nonce[56..64].copy_from_slice(&encrypted[56..64]);Ok((nonce,tx,rx))
 }
 async fn write_record(stream:&mut TcpStream,bytes:&[u8])->anyhow::Result<()> {anyhow::ensure!(bytes.len()<=RECORD_LIMIT,"request too large");let mut header=vec![23,3,3];header.extend(u16::try_from(bytes.len())?.to_be_bytes());stream.write_all(&header).await?;stream.write_all(bytes).await?;Ok(())}
-fn request(nonce:[u8;16])->Vec<u8>{let mut body=vec![0;8];let id=((chrono::Utc::now().timestamp() as u64)<<32)|4;body.extend(id.to_le_bytes());body.extend(20u32.to_le_bytes());body.extend(REQ_PQ_MULTI.to_le_bytes());body.extend(nonce);body}
-fn validate_response(frame:&[u8],nonce:&[u8;16])->anyhow::Result<()> {
+pub(crate) fn request(nonce:[u8;16])->Vec<u8>{let mut body=vec![0;8];let id=((chrono::Utc::now().timestamp() as u64)<<32)|4;body.extend(id.to_le_bytes());body.extend(20u32.to_le_bytes());body.extend(REQ_PQ_MULTI.to_le_bytes());body.extend(nonce);body}
+pub(crate) fn validate_response(frame:&[u8],nonce:&[u8;16])->anyhow::Result<()> {
     anyhow::ensure!(frame.len()>=76&&frame[..8]==[0;8]&&frame[8]&1==1,"invalid MTProto envelope");
     let length=u32::from_le_bytes(frame[16..20].try_into()?) as usize;
     anyhow::ensure!(length>=56&&length.is_multiple_of(4)&&length<=frame.len()-20&&u32::from_le_bytes(frame[20..24].try_into()?)==RES_PQ&&bool::from(frame[24..40].ct_eq(nonce)),"invalid resPQ or nonce");

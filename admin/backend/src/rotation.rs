@@ -19,6 +19,7 @@ pub(crate) async fn route(state:&State,user:&Session,parts:&[&str],method:&Metho
         }
         ["ip-pools"] if *method==Method::POST=>{
             user.require("owner")?;let node_id=parse_id(field(&body,"node_id")?)?;let group_id=parse_id(field(&body,"group_id")?)?;
+            if node(state,node_id).await?.get::<String,_>("api_url")=="managed://local"{return Err(conflict("managed_node_requires_profile_rotation"));}
             let assigned=inventory(state,node_id).await?;let selected=addresses(&body["addresses"],&assigned)?;
             let owning=node(state,node_id).await?;let doc:Value=owning.get("document");
             let mut tx=state.db.begin().await?;sqlx::query("SELECT pg_advisory_xact_lock($1)").bind(crate::state::DNS_COORDINATOR_LOCK).execute(&mut *tx).await?;

@@ -5,9 +5,10 @@ import { Overview, Nodes, Users, Configuration, Shaping, Diagnostics } from './n
 import { Operations, Failover, Probes, Administrators, Audit, NoNode } from './fleet-pages';
 import { IPRotation } from './rotation-page';
 import './styles.css';
+import { Profiles, Certificates } from './managed-pages';
 import { Brand, Icon, Navigation, ThemeControl, pageIcon, useAppearance } from './interface';
 
-const pages = ['Обзор', 'Серверы', 'Пользователи', 'Конфигурация', 'Шейпер', 'Диагностика', 'Внешние проверки', 'Переключение DNS', 'Ротация IP', 'Операции', 'Аудит', 'Администраторы'];
+const pages = ['Обзор', 'Серверы', 'Общие профили', 'Сертификаты', 'Пользователи', 'Конфигурация', 'Шейпер', 'Диагностика', 'Внешние проверки', 'Переключение DNS', 'Ротация IP', 'Операции', 'Аудит', 'Администраторы'];
 function App() {
   const appearance = useAppearance();
   const [user, setUser] = useState<User | null>(null); const [checked, setChecked] = useState(false); const [error, setError] = useState(''); const [notice, setNotice] = useState(''); const [busy, setBusy] = useState(false);
@@ -29,10 +30,12 @@ function App() {
     {nodes.length > 0 && <div className="targets"><label>Просматриваемый сервер<select aria-label="Просматриваемый сервер" value={primary} onChange={event => setPrimary(event.target.value)}>{nodes.map(node => <option value={node.id} key={node.id}>{node.name}</option>)}</select></label>{canWrite && <fieldset><legend>Серверы для изменений</legend>{nodes.map(node => <label key={node.id}><input type="checkbox" checked={selected.includes(node.id)} onChange={event => setSelected(event.target.checked ? [...selected, node.id] : selected.filter(id => id !== node.id))} />{node.name}</label>)}</fieldset>}{node && isStale(node) && <span className="stale">Данные мониторинга устарели</span>}</div>}
     {page === 'Обзор' && <Overview nodes={nodes} nodeId={primary} inspect={setPrimary} />}{page === 'Серверы' && <Nodes nodes={nodes} user={user} refresh={() => run(refresh)} run={run} />}
     {['Пользователи', 'Конфигурация', 'Шейпер', 'Диагностика'].includes(page) && !node && <NoNode />}
-    {node && page === 'Пользователи' && <Users key={node.id} nodeId={node.id} canWrite={canWrite} submit={submit} run={run} />}
-    {node && page === 'Конфигурация' && <Configuration key={node.id} nodeId={node.id} selected={selected} canWrite={canWrite} submit={submit} />}
-    {node && page === 'Шейпер' && <Shaping key={node.id} nodeId={node.id} canWrite={canWrite} submit={submit} run={run} />}
+    {node?.document.managed === true && ['Пользователи', 'Конфигурация', 'Шейпер'].includes(page) && <p>Эта нода управляется общим профилем. Меняйте пользователей и настройки в разделе «Общие профили».</p>}
+    {node && page === 'Пользователи' && <Users key={node.id} nodeId={node.id} canWrite={canWrite && !node.document.managed} submit={submit} run={run} />}
+    {node && page === 'Конфигурация' && <Configuration key={node.id} nodeId={node.id} selected={selected} canWrite={canWrite && !node.document.managed} submit={submit} />}
+    {node && page === 'Шейпер' && <Shaping key={node.id} nodeId={node.id} canWrite={canWrite && !node.document.managed} submit={submit} run={run} />}
     {node && page === 'Диагностика' && <Diagnostics key={node.id} nodeId={node.id} canWrite={canWrite} run={run} />}
+    {page === 'Общие профили' && <Profiles user={user} groups={groups} nodes={nodes} run={run} />}{page === 'Сертификаты' && <Certificates user={user} run={run} />}
     {page === 'Внешние проверки' && <Probes user={user} run={run} />}{page === 'Переключение DNS' && <Failover nodes={nodes} groups={groups} user={user} run={run} refresh={() => run(refresh)} />}
     {page === 'Ротация IP' && <IPRotation nodes={nodes} groups={groups} user={user} run={run} />}
     {page === 'Операции' && <Operations rows={operations} run={run} refresh={() => run(refresh)} />}{page === 'Аудит' && <Audit run={run} />}{page === 'Администраторы' && user.role === 'owner' && <Administrators run={run} />}

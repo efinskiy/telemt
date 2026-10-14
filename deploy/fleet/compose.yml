@@ -25,6 +25,7 @@ services:
       ADMIN_MASTER_KEY_FILE: /run/secrets/master_key
       ADMIN_GEOIP_DATABASE: /var/lib/telemt-geoip/dbip-city-lite.mmdb
       ADMIN_ORIGIN: "https://${ADMIN_DOMAIN:?Set ADMIN_DOMAIN}"
+      MANAGED_NODE_IMAGE: "${MANAGED_NODE_IMAGE:-}"
       RUST_LOG: info
     secrets: [database_url, master_key]
     volumes: [geoip:/var/lib/telemt-geoip:ro]

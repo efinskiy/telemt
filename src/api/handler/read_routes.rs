@@ -21,8 +21,17 @@ pub(super) async fn handle(
             let users: Vec<_> = credentials.iter().map(|(user, secret)| (*user, *secret, cfg.access.is_user_enabled(user))).collect();
             let mut listeners: Vec<_> = cfg.server.listeners.iter().map(|listener| serde_json::json!({"port": listener.port.unwrap_or(cfg.server.port), "transport": listener.transport}).to_string()).collect();
             listeners.sort_unstable(); listeners.dedup();
+            // Public addresses differ by node; the port and WEB handshake contract must agree.
+            let mut web_contract = serde_json::to_value(&cfg.web).map_err(|_| ApiFailure::bad_request("WEB configuration cannot be serialized"))?;
+            if let Some(vhosts) = web_contract["vhosts"].as_array_mut() {
+                for vhost in vhosts {
+                    let port = vhost["public_addr"].as_str().and_then(|value| value.parse::<std::net::SocketAddr>().ok()).map(|address| address.port());
+                    vhost["public_addr"] = serde_json::json!(port);
+                }
+            }
             let manifest = serde_json::json!({
                 "users": users,
+                "web": web_contract,
                 "tls_domain": cfg.censorship.tls_domain,
                 "tls_domains": cfg.censorship.tls_domains,
                 "listeners": listeners,
@@ -30,7 +39,9 @@ pub(super) async fn handle(
                 "port": cfg.server.port,
             });
             let fingerprint = hex::encode(crate::crypto::sha256(manifest.to_string().as_bytes()));
-            let data = serde_json::json!({"fingerprint": fingerprint, "shaping_supported": true});
+            let shared_users: Vec<_> = users.iter().filter(|(name, _, _)| *name != "fleet_probe").collect();
+            let user_fingerprint = hex::encode(crate::crypto::sha256(serde_json::json!(shared_users).to_string().as_bytes()));
+            let data = serde_json::json!({"fingerprint": fingerprint, "user_fingerprint": user_fingerprint, "shaping_supported": true});
             Ok(success_response(StatusCode::OK, data, current_revision(&shared.config_path).await?))
         }
         ("GET", "/v1/fleet/traffic") => {

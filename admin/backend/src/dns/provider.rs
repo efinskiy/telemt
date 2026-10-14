@@ -24,6 +24,7 @@ pub(crate) async fn read_records(state:&State,document:&Value,token:&str)->anyho
 }
 
 pub(super) async fn eligible(state:&State,group:&sqlx::postgres::PgRow,target:Uuid)->Result<Value> {
+    if !crate::managed::admission::ready(state,target).await? {return Err(ApiError(StatusCode::CONFLICT,"managed_node_not_ready"));}
     let document:Value=group.get("document");let nodes=document["node_ids"].as_array().ok_or_else(bad)?;
     if !nodes.iter().any(|id|id.as_str()==Some(target.to_string().as_str())){return Err(bad());}
     let candidate=node(state,target).await?;

@@ -25,23 +25,7 @@ fn carrier_method_is_page_owned_and_used_by_every_https_request() {
             method,
             &SecureRandom::new(),
         );
-        let nonce = page
-            .content_security_policy
-            .split_once("script-src 'nonce-")
-            .unwrap()
-            .1
-            .split_once('\'')
-            .unwrap()
-            .0;
-        assert_eq!(
-            base64::engine::general_purpose::URL_SAFE_NO_PAD
-                .decode(nonce)
-                .unwrap()
-                .len(),
-            18
-        );
-        // URL-safe nonces may contain double underscores; only template remnants are invalid.
-        assert!(!page.body.replace(nonce, "").contains("__"));
+        assert_templates_rendered(&page);
         assert!(
             page.body
                 .contains(&format!("const carrierMethod='{}';", method.as_str()))
@@ -128,7 +112,7 @@ fn render_diagnostic_page(bootstrap: &str) -> BridgePage {
 #[test]
 fn rendered_page_contains_bounded_negotiation_contract() {
     let page = render_page("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", 4);
-    assert!(!page.body.contains("__"));
+    assert_templates_rendered(&page);
     assert!(!page.body.contains("bridge="));
     assert!(page.body.contains("X-Carrier-Capabilities"));
     assert!(page.body.contains("X-Carrier-Attempt"));
@@ -411,7 +395,7 @@ fn bridge_diagnostic_sideband_is_absent_by_default() {
 fn enabled_bridge_diagnostics_use_the_https_sideband_only() {
     let page = render_diagnostic_page("JJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ");
 
-    assert!(!page.body.contains("__"));
+    assert_templates_rendered(&page);
     assert!(page.body.contains("fetch(relayBase+'/api/v1/diagnostic'"));
     assert!(page.body.contains("JSON.stringify({v:1,event})"));
     assert!(page.body.contains("'Content-Type':'application/json'"));
@@ -465,4 +449,24 @@ fn bridge_diagnostic_hooks_preserve_native_and_recovery_contracts() {
     assert!(diagnostic_rebound < limits_replaced);
     assert!(page.body.contains("clientDiagnostics.helloTimeout()"));
     assert!(!page.body.contains("port.postMessage({t:'status',state,"));
+}
+
+fn assert_templates_rendered(page: &BridgePage) {
+    let nonce = page
+        .content_security_policy
+        .split_once("script-src 'nonce-")
+        .unwrap()
+        .1
+        .split_once('\'')
+        .unwrap()
+        .0;
+    assert_eq!(
+        base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .decode(nonce)
+            .unwrap()
+            .len(),
+        18
+    );
+    // URL-safe nonces may contain double underscores; only template remnants are invalid.
+    assert!(!page.body.replace(nonce, "").contains("__"));
 }

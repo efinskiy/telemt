@@ -23,7 +23,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target: [admin, node, probe]
+        target: [admin, node, probe, managed-node]
         arch: [amd64, arm64]
         include:
           - arch: amd64
@@ -87,7 +87,7 @@ jobs:
       packages: write
     strategy:
       matrix:
-        target: [admin, node, probe]
+        target: [admin, node, probe, managed-node]
     steps:
       - uses: docker/setup-buildx-action@v4.3.0
       - uses: docker/login-action@v4.6.0

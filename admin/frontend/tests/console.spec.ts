@@ -132,7 +132,7 @@ test('bulk caps are independently configurable with the displayed revision', asy
 test('owner can submit a public hostname as the Control API URL', async ({ page }) => {
   await fixture(page, 'owner');
   await page.getByRole('navigation').getByRole('button', { name: 'Серверы', exact: true }).click();
-  await page.getByRole('button', { name: 'Добавить сервер', exact: true }).click();
+  await page.getByRole('button', { name: 'Подключить существующий API', exact: true }).click();
   await page.getByLabel('Название сервера', { exact: true }).fill('Public node');
   await page.getByLabel('Адрес API управления', { exact: true }).fill('https://node-api.example.org:9443/');
   await page.getByLabel('Домен FakeTLS (SNI)', { exact: true }).fill('example.org');
@@ -313,7 +313,7 @@ test('redesign mobile dock reaches secondary pages and keeps dialogs usable', as
   await expect(page.getByRole('dialog')).toHaveCount(0);
   await page.screenshot({ path: testInfo.outputPath('telemt-redesign-mobile.png'), fullPage: true });
   await page.getByRole('navigation').getByRole('button', { name: 'Серверы', exact: true }).click();
-  await page.getByRole('button', { name: 'Добавить сервер', exact: true }).click();
+  await page.getByRole('button', { name: 'Подключить существующий API', exact: true }).click();
   await expect(page.getByRole('dialog')).toBeVisible();
   await expect(page.getByRole('dialog').getByRole('button', { name: 'Сохранить', exact: true })).toBeEnabled();
   await page.screenshot({ path: testInfo.outputPath('telemt-redesign-mobile-form.png'), fullPage: true });

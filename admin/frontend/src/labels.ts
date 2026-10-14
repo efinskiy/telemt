@@ -25,6 +25,26 @@ export function stateLabel(value: string): string { return states[value] ?? valu
 export function number(value: unknown, digits = 1): string { return typeof value === 'number' && Number.isFinite(value) ? new Intl.NumberFormat('ru-RU', { maximumFractionDigits: digits }).format(value) : 'Нет данных'; }
 export function date(value: unknown): string { if (typeof value !== 'string' || !Number.isFinite(Date.parse(value))) return 'Нет данных'; return new Date(value).toLocaleString('ru-RU'); }
 const errors: Record<string, string> = {
+ migration_keys_mismatch:'Пользователи или их ключи не совпадают. Импортируйте TOML текущей ноды в профиль и опубликуйте его; нода должна поддерживать проверку ключей.',
+ migration_readiness_required:'Для миграции требуется доступ к действующему API ноды.',
+ profile_revision_conflict:'Профиль изменён другим администратором. Перечитайте его и повторите правки.',
+ profile_validation_failed:'Конфигурация не прошла полный валидатор telemt. Проверьте значения и совместимость параметров.',
+ profile_requires_user:'Добавьте хотя бы одного пользователя перед публикацией.',
+ publish_profile_first:'Сначала опубликуйте профиль.',
+ certificate_not_ready:'Сначала импортируйте или выпустите действующий сертификат.',
+ certificate_invalid:'Проверьте цепочку доверия, срок действия, домен и соответствие приватного ключа.',
+ certificate_order_pending:'Выпуск сертификата ещё выполняется. Дождитесь завершения и очистки DNS-проверки.',
+ managed_node_requires_profile_rotation: 'Для нод общего профиля используйте DNS-переключение между серверами. Пулы IP доступны нодам с прямым API.',
+  remove_ip_pool_before_migration: 'Отключите и удалите пул IP перед переводом ноды на общий профиль.',
+  profile_dns_port_mismatch: 'Порт профиля отличается от порта DNS-группы. Отвяжите группу перед изменением порта, затем настройте её заново.',
+  staging_requires_test_trust: 'Тестовый ACME доступен только на изолированном стенде с настроенным доверенным тестовым CA.',
+  managed_image_not_configured:'В конфигурации Fleet задайте MANAGED_NODE_IMAGE с digest опубликованного образа GHCR.',
+ managed_profile_owned:'Настройки этой ноды принадлежат общему профилю.',
+ managed_node_not_ready:'Нода ещё не подтвердила требуемую конфигурацию и сертификат.',
+ node_already_registered:'Токен уже использован. Сохраните локальный том состояния ноды.',
+ import_requires_single_domain:'Импорт поддерживает один WEB-домен на профиль.',
+ import_domain_mismatch:'Домен WEB в файле не совпадает с доменом профиля.',
+
  dns_invalid_name:'Укажите название группы длиной до 128 байт без управляющих символов.',
  dns_invalid_domain:'Укажите домен прокси без https://, порта, пути и пробелов.',
  dns_invalid_zone_id:'Идентификатор зоны Cloudflare должен содержать ровно 32 шестнадцатеричных символа без пробелов.',

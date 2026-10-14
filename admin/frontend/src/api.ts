@@ -7,8 +7,8 @@ export type Group = { id: string; name: string; active_node: string; automatic: 
 let csrf = '';
 export function setCsrf(value: string) { csrf = value; }
 /** Reports Fleet routing failures without exposing upstream HTML or response secrets. */
-export async function api<T>(path: string, method = 'GET', body?: Json, signal?: AbortSignal): Promise<T> {
-  const response = await fetch(`/api/${path}`, { method, signal, credentials: 'same-origin', headers: { ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}), ...(method !== 'GET' ? { 'X-CSRF-Token': csrf } : {}) }, body: body === undefined ? undefined : JSON.stringify(body) });
+export async function api<T>(path: string, method = 'GET', body?: Json, signal?: AbortSignal, revision?: number): Promise<T> {
+  const response = await fetch(`/api/${path}`, { method, signal, credentials: 'same-origin', headers: { ...(revision !== undefined ? { 'If-Match': String(revision) } : {}), ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}), ...(method !== 'GET' ? { 'X-CSRF-Token': csrf } : {}) }, body: body === undefined ? undefined : JSON.stringify(body) });
   if (response.status === 401 && path !== 'login') window.dispatchEvent(new Event('telemt-session-expired'));
   const target = `/api/${path.split('?')[0]}`;
   const mediaType = response.headers.get('Content-Type')?.split(';')[0].trim().toLowerCase();

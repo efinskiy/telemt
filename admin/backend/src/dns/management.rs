@@ -28,6 +28,7 @@ pub(super) async fn patch(state:&State,user:&Session,id:Uuid,body:Value)->Result
     let pending:i64=sqlx::query_scalar("SELECT count(*) FROM dns_changes WHERE group_id=$1 AND state IN ('writing','unknown')").bind(id).fetch_one(&mut *tx).await?;
     if enabled&&pending>0{return Err(ApiError(axum::http::StatusCode::CONFLICT,"dns_outcome_unknown"));}
     let status=if document["configuration_verified"]!=true{"configuration_change_requires_verification"}else if changed{"group_changed_automation_disabled"}else if enabled{"waiting_for_quorum"}else{"disabled"};
+    sqlx::query("UPDATE profiles SET resume_automatic=false WHERE group_id=$1").bind(id).execute(&mut *tx).await?;
     sqlx::query("UPDATE failover_groups SET document=$2,token_cipher=$3,automatic=$4,status=$5,updated_at=now() WHERE id=$1").bind(id).bind(document).bind(cipher).bind(enabled).bind(status).execute(&mut *tx).await?;
     sqlx::query("INSERT INTO audit(actor,action,target,outcome) VALUES($1,'dns.group.update',$2,$3)").bind(user.id).bind(id.to_string()).bind(json!({"automatic":enabled,"membership_or_token_changed":changed})).execute(&mut *tx).await?;
     tx.commit().await?;Ok(Json(ok(json!({}))))

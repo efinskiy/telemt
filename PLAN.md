@@ -109,8 +109,8 @@ interfaces. Production servers and DNS are not modified during development.
 - [x] Execute production limiter harness, including 10,000 logical flows and disabled loopback comparison.
 - [x] Run protocol/core tests in the temporary macOS portability harness and reproduce failures on baseline.
 - [x] Record verification evidence, commands, environment limits and deployment prerequisites.
-- [ ] Run the entire unmodified core test suite on a Linux execution host; CI job is provided.
-- [ ] Build and start Compose images on a Docker Engine host; local Engine is unavailable.
+- [x] Run the existing core test suite on Linux: 2563 passed, 73 ignored on Rust 1.88 (2026-10-14).
+- [x] Build and start local Compose Fleet/PostgreSQL/nginx and two managed nodes on Docker Engine (2026-10-14).
 - [ ] Run 10,000 real Direct/Middle/WEB connections with simultaneous small/bulk traffic and slow peers.
 - [ ] Measure full-server disabled-shaper throughput against baseline on an isolated reproducible load host.
 - [ ] Exercise real Cloudflare test-zone failure/recovery using two independent Russian probe networks.
@@ -177,3 +177,25 @@ See `deploy/fleet/VERIFICATION.md` for results and outstanding acceptance eviden
 
 - Final application verification: `b18711d` passed Build (38480488409), Check (38480488425), CodeQL (38480488587), Fleet control and shaping (38480488546), and Fleet images (38480488451). Fleet tests and strict Clippy passed on Rust 1.88 and stable; browser tests passed.
 - Anonymous GHCR inspection confirmed `telemt-admin`, `telemt-node`, and `telemt-probe` indexes contain Linux amd64/arm64; each image config has the exact application commit revision and `main` matches its full-SHA tag. No production deployment or DNS mutation was performed.
+
+## Managed cluster profiles and one-file node enrollment
+
+- [x] Add versioned shared profiles/users, certificate storage, enrollment identities and durable managed-node commands.
+- [x] Implement central certificate import, DNS-01 issuance/renewal and verified bundle distribution.
+- [x] Build the autonomous managed-node supervisor, safe configuration validation/activation/recovery and HTTPS management transport.
+- [x] Integrate monitoring, DNS admission, WEB compatibility and external WEB probes without changing existing direct-node behavior.
+- [x] Add Russian profile/certificate forms, shared users and the name/IP/profile-to-Compose wizard.
+- [x] Package native managed-node images, migration/backup/restore documentation and local Compose verification.
+- [x] Run focused backend/agent invariants, primary frontend scenarios and real local Docker end-to-end checks.
+
+Decisions: shared users, immediate parallel rollout, local quotas, imported certificates followed by central ACME renewal, WEB on 443 and native MTProxy on configurable 8443, verified automatic reserve admission. Existing installations are imported explicitly. No live production DNS changes.
+
+
+Verification evidence (local, 2026-10-14):
+- Rust 1.88 optimized Linux node/Fleet/supervisor images built; strict backend, supervisor and probe Clippy passed on Rust 1.88 and 1.94.
+- PostgreSQL integration and backend unit checks: 24 passed. Shared deployment contract invariant: 1 passed. Frontend: production build/typecheck, 27 unit checks, 31 browser scenarios; 2 focused managed scenarios rerun after UI changes.
+- Real Docker two-node lifecycle: enrollment, TLS readback, certificate replacement without telemt restart, shared user rollout, configuration rollback preserving client links, local drift detection/repair, and both nodes restarting successfully while Fleet is offline. Reproducible harness: `deploy/fleet/tests/managed_smoke.py`.
+- Real Telegram native FakeTLS and WEB req_pq/resPQ nonce exchange passed against the local managed stack using the opt-in probe test.
+- Workflow syntax and root formatting checks passed. Full existing Linux core suite on Rust 1.88: 2563 passed, 0 failed, 73 ignored. The release-profile test link was killed with SIGKILL; the ordinary test profile with two jobs and no debug information passed. Production release images built successfully.
+- Live ACME issuance/renewal against a Cloudflare zone and two-network DNS failover are not executed: they require an external disposable DNS zone and probe networks. No production node/DNS changes, commits, pushes or GHCR publication were performed for this implementation.
+- Managed profiles support inter-server DNS switching. Existing single-server IP pools remain on direct-API nodes; migration with an attached pool and pool creation on a managed node are rejected explicitly.

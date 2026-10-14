@@ -1,5 +1,7 @@
 # Telemt fleet deployment
 
+See [shared profiles and managed-node deployment](MANAGED-NODES.md) for the one-file enrollment wizard, central certificates and upgrades.
+
 This directory builds the modified node, control service, probe and UI from this
 checkout. PostgreSQL 16 persists control state; the proxy and its shaper never
 require the control service to forward traffic. Run on Linux with Docker Engine

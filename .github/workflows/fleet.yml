@@ -42,6 +42,8 @@ jobs:
             target
             admin/backend/target
             agent/target
+            node-agent/target
+            managed/target
             tools/shaping-harness/target
           key: fleet-rust-${{ runner.os }}-${{ matrix.toolchain }}-${{ hashFiles('**/Cargo.lock') }}-${{ github.sha }}
           restore-keys: |
@@ -67,6 +69,9 @@ jobs:
           GEOIP_MONTH: ${{ steps.geoip-month.outputs.month }}
         run: python3 deploy/fleet/update_geoip.py --month "$GEOIP_MONTH" --destination "$TELEMT_TEST_GEOIP_DATABASE"
       - run: cargo test --manifest-path admin/backend/Cargo.toml --locked -- --include-ignored
+      - run: cargo test --manifest-path managed/Cargo.toml --locked
+      - run: cargo test --manifest-path node-agent/Cargo.toml --locked
+      - run: cargo clippy --manifest-path node-agent/Cargo.toml --all-targets --locked -- -D warnings
       - run: cargo test --manifest-path agent/Cargo.toml --locked
       - run: cargo clippy --manifest-path admin/backend/Cargo.toml --all-targets --locked -- -D warnings
       - run: cargo clippy --manifest-path agent/Cargo.toml --all-targets --locked -- -D warnings

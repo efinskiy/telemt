@@ -116,3 +116,46 @@ registration/editing and an authenticated hostname request resolved to the local
 fixture; strict all-target Clippy passed; Linux all-target cross-check passed;
 frontend production build/type checking passed; browser suite **9 passed**.
 No real node endpoint or deployment was changed.
+
+## Managed profiles and enrollment (2026-10-14)
+
+The shared-profile implementation was tested with the actual Linux ARM64 Fleet,
+telemt, nginx and managed supervisor images on local Docker. This supersedes the
+older Docker-unavailable notes above for this feature only.
+
+- Rust 1.88 production release images built successfully. Backend, supervisor and
+  probe pass strict all-target Clippy on 1.88 and 1.94.
+- Backend: 24 unit/integration tests passed, including disposable PostgreSQL and
+  the real GeoIP fixture. Shared deployment contract: 1 invariant passed. Probe:
+  6 passed, 2 opt-in tests ignored in the ordinary run.
+- Frontend production build/typecheck and 27 unit tests passed. All 31 browser
+  scenarios passed; the two managed wizard/revision scenarios were rerun afterward.
+- `tests/managed_smoke.py` passed on two fresh nodes: enrollment, desired/applied
+  versions, revision conflicts, certificate/key validation, actual TLS readback,
+  certificate replacement without telemt restart, shared user rollout, rollback
+  preserving existing links, detection/repair of local drift, and both nodes
+  restarting from last-good state while Fleet was stopped. Its fixtures were removed.
+- The opt-in probe test performed both native FakeTLS and WEB MTProto
+  `req_pq_multi → resPQ` with nonce verification against the actual managed local
+  node and Telegram DC2; it passed in 0.65 seconds.
+- Workflow syntax and root Rust formatting checks passed. Production image builds
+  and service startup do not run Rust tests. Separate `node-tests` and `probe-tests`
+  Docker targets exist for explicit verification only. The root tests require the
+  complete source tree mounted into `/build/src`, because the existing Docker ignore
+  rule excludes a test fixture directory named `secrets`.
+- An attempted full release-profile core test link was terminated with SIGKILL;
+  the production release builds succeeded. The core suite was then run with the
+  normal test profile, two build jobs and debug information disabled to reduce memory.
+  Result on Linux ARM64 / Rust 1.88: **2563 passed, 0 failed, 73 ignored**, 193.17 seconds.
+  Existing root-code warnings were retained; no assertions or ignores were weakened.
+
+No live Cloudflare zone or production node was changed. ACME order persistence,
+DNS-01 integration and renewal scheduling compile and are included, but live CA
+issuance/renewal and two-independent-network failover require a disposable external
+zone and probe sites. The local test imports and rotates real certificates from a
+private test CA; it does not simulate a successful public ACME issuance.
+
+The new managed-node image workflow is prepared for both amd64 and arm64. This
+implementation has not been pushed or published to GHCR; local ARM64 images were
+built and run. Configure `MANAGED_NODE_IMAGE` with a published immutable digest
+before using the production enrollment wizard.
