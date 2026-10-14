@@ -6,6 +6,8 @@ import { Dialog } from './components';
 const paths: Record<string, string> = {
   overview: 'M3 3h7v7H3z M14 3h7v7h-7z M3 14h7v7H3z M14 14h7v7h-7z',
   server: 'M4 3h16v7H4z M4 14h16v7H4z M7 6.5h.01 M7 17.5h.01 M16 6.5h1 M16 17.5h1',
+  profiles: 'M4 3h10l6 6v12H4z M14 3v6h6 M8 13h8 M8 17h5',
+  certificate: 'M12 3a6 6 0 1 0 0 12 6 6 0 0 0 0-12 M8 14l-1 7 5-3 5 3-1-7',
   users: 'M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2 M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8 M17 4a4 4 0 0 1 0 7 M22 21v-2a4 4 0 0 0-3-3.87',
   settings: 'M4 7h16 M4 17h16 M8 4v6 M16 14v6',
   shaping: 'M3 7h18 M6 12h12 M9 17h6 M12 17v4',
@@ -31,15 +33,43 @@ export function Icon({ name, className = '' }: { name: string; className?: strin
   return <svg className={`icon ${className}`} width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d={paths[name] ?? paths.activity} /></svg>;
 }
 export function Brand() { return <div className="brand"><span className="brand-symbol" aria-hidden="true"><Icon name="shaping" /></span><div className="brand-name">telemt<span>Fleet</span></div></div>; }
-const icons: Record<string, string> = { 'Обзор': 'overview', 'Серверы': 'server', 'Пользователи': 'users', 'Конфигурация': 'settings', 'Шейпер': 'shaping', 'Диагностика': 'activity', 'Внешние проверки': 'globe', 'Переключение DNS': 'dns', 'Ротация IP': 'rotate', 'Операции': 'operations', 'Аудит': 'audit', 'Администраторы': 'shield' };
+const icons: Record<string, string> = { 'Обзор': 'overview', 'Серверы': 'server', 'Общие профили': 'profiles', 'Сертификаты': 'certificate', 'Пользователи': 'users', 'Конфигурация': 'settings', 'Шейпер': 'shaping', 'Диагностика': 'activity', 'Внешние проверки': 'globe', 'Переключение DNS': 'dns', 'Ротация IP': 'rotate', 'Операции': 'operations', 'Аудит': 'audit', 'Администраторы': 'shield' };
 export const pageIcon = (page: string) => icons[page] ?? 'overview';
+const navigationGroups = [
+  { title: 'Панель управления', pages: ['Обзор'] },
+  { title: 'Инфраструктура', pages: ['Серверы', 'Общие профили', 'Сертификаты'] },
+  { title: 'Трафик и доступ', pages: ['Пользователи', 'Конфигурация', 'Шейпер'] },
+  { title: 'Наблюдение', pages: ['Диагностика', 'Внешние проверки'] },
+  { title: 'Отказоустойчивость', pages: ['Переключение DNS', 'Ротация IP'] },
+  { title: 'Система', pages: ['Операции', 'Аудит', 'Администраторы'] },
+];
+const descriptions: Record<string, string> = {
+  'Обзор': 'Состояние инфраструктуры, нагрузка и подключения в одном месте.',
+  'Серверы': 'Подключайте ноды и управляйте инфраструктурой кластера.',
+  'Общие профили': 'Единые настройки и пользователи для группы серверов.',
+  'Сертификаты': 'Общие SSL-сертификаты, сроки действия и продление.',
+  'Пользователи': 'Доступ к прокси, подключения и индивидуальные ограничения.',
+  'Конфигурация': 'Настройки выбранной ноды и управление их применением.',
+  'Шейпер': 'Распределение канала, приоритеты и текущая нагрузка клиентов.',
+  'Диагностика': 'Состояние telemt, маршрутов, upstream и WEB-сессий.',
+  'Внешние проверки': 'Доступность прокси глазами независимых сетей.',
+  'Переключение DNS': 'Переключение доменов между совместимыми серверами.',
+  'Ротация IP': 'Пулы адресов нод и правила автоматической смены IP.',
+  'Операции': 'Ход выполнения изменений и результаты по каждому серверу.',
+  'Аудит': 'История действий администраторов и изменений в кабинете.',
+  'Администраторы': 'Учётные записи, роли и доступ к управлению Fleet.',
+};
+/** Page metadata keeps desktop and mobile navigation in the same hierarchy. */
+export function pageContext(page: string) {
+  return { group: navigationGroups.find(group => group.pages.includes(page))?.title ?? 'Fleet', description: descriptions[page] ?? '' };
+}
 type Theme = 'system' | 'light' | 'dark';
 const stored = (key: string) => { try { return localStorage.getItem(key); } catch { return null; } };
 // Private browsing may disallow preference persistence; in-memory controls still work.
 const save = (key: string, value: string) => { try { localStorage.setItem(key, value); } catch {} };
 export function useAppearance() {
   const [theme, setTheme] = useState<Theme>(() => { const value = stored('telemt.theme'); return value === 'light' || value === 'dark' ? value : 'system'; });
-  const [collapsed, setCollapsed] = useState(() => stored('telemt.sidebar') !== 'expanded');
+  const [collapsed, setCollapsed] = useState(() => stored('telemt.sidebar') === 'collapsed');
   useEffect(() => {
     const media = window.matchMedia('(prefers-color-scheme: dark)');
     const apply = () => { document.documentElement.dataset.theme = theme === 'system' ? media.matches ? 'dark' : 'light' : theme; };
@@ -58,8 +88,12 @@ export function Navigation({ pages, page, select, user, collapsed, toggle, logou
   const quick = ['Обзор', 'Серверы', 'Пользователи', 'Шейпер'];
   const go = (item: string) => { select(item); setMore(false); };
   const item = (name: string) => <button key={name} title={name} aria-label={name} aria-current={page === name ? 'page' : undefined} className={page === name ? 'nav-active' : ''} onClick={() => go(name)}><Icon name={pageIcon(name)} /><span>{name}</span></button>;
-  return <><aside className="sidebar"><div className="sidebar-brand"><Brand /></div><nav className="desktop-nav" aria-label="Разделы Fleet">{visible.map(item)}</nav><div className="sidebar-bottom"><button className="collapse-control" aria-label={collapsed ? 'Развернуть меню' : 'Свернуть меню'} title={collapsed ? 'Развернуть меню' : 'Свернуть меню'} onClick={toggle}><Icon name={collapsed ? 'expand' : 'collapse'} /><span>Свернуть меню</span></button><div className="account"><span className="avatar" title={`${user.username} · ${stateLabel(user.role)}`}>{user.username.slice(0, 1).toUpperCase()}</span><div><strong>{user.username}</strong><small>{stateLabel(user.role)}</small></div><button className="icon-button" title="Выйти" aria-label="Выйти" onClick={logout}><Icon name="logout" /></button></div></div></aside>
+  const grouped = () => navigationGroups.map(group => {
+    const entries = group.pages.filter(name => visible.includes(name));
+    return entries.length > 0 && <div className="nav-group" key={group.title}><div className="nav-group-title">{group.title}</div>{entries.map(item)}</div>;
+  });
+  return <><aside className="sidebar"><div className="sidebar-brand"><Brand /></div><nav className="desktop-nav" aria-label="Разделы Fleet">{grouped()}</nav><div className="sidebar-bottom"><button className="collapse-control" aria-label={collapsed ? 'Развернуть меню' : 'Свернуть меню'} title={collapsed ? 'Развернуть меню' : 'Свернуть меню'} onClick={toggle}><Icon name={collapsed ? 'expand' : 'collapse'} /><span>Свернуть меню</span></button><div className="account"><span className="avatar" title={`${user.username} · ${stateLabel(user.role)}`}>{user.username.slice(0, 1).toUpperCase()}</span><div><strong>{user.username}</strong><small>{stateLabel(user.role)}</small></div><button className="icon-button" title="Выйти" aria-label="Выйти" onClick={logout}><Icon name="logout" /></button></div></div></aside>
     <nav className="mobile-nav" aria-label="Разделы Fleet">{quick.map(item)}<button aria-label="Ещё разделы" aria-expanded={more} aria-haspopup="dialog" className={!quick.includes(page) ? 'nav-active' : ''} onClick={() => setMore(true)}><Icon name="more" /><span>Ещё</span></button></nav>
-    {more && <Dialog title="Разделы Fleet" close={() => setMore(false)}><div className="more-navigation">{visible.map(item)}</div><div className="mobile-account"><span>{user.username} · {stateLabel(user.role)}</span><button className="quiet" onClick={() => { setMore(false); logout(); }}>Выйти</button></div></Dialog>}
+    {more && <Dialog title="Разделы Fleet" close={() => setMore(false)}><div className="more-navigation">{grouped()}</div><div className="mobile-account"><span>{user.username} · {stateLabel(user.role)}</span><button className="quiet" onClick={() => { setMore(false); logout(); }}>Выйти</button></div></Dialog>}
   </>;
 }

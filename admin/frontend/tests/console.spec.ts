@@ -31,8 +31,10 @@ test('owner dashboard and all sections render without browser errors', async ({ 
   const errors: string[] = []; page.on('pageerror', error => errors.push(error.message));
   await fixture(page, 'owner');
   await expect(page.getByText('2 / 20')).toBeVisible();
-  for (const name of ['Серверы', 'Пользователи', 'Конфигурация', 'Шейпер', 'Диагностика', 'Внешние проверки', 'Переключение DNS', 'Ротация IP', 'Операции', 'Аудит', 'Администраторы']) {
-    await page.getByRole('navigation').getByRole('button', { name, exact: true }).click(); await expect(page.getByRole('heading', { name, exact: true })).toBeVisible();
+  for (const name of ['Серверы', 'Общие профили', 'Сертификаты', 'Пользователи', 'Конфигурация', 'Шейпер', 'Диагностика', 'Внешние проверки', 'Переключение DNS', 'Ротация IP', 'Операции', 'Аудит', 'Администраторы']) {
+    await page.getByRole('navigation').getByRole('button', { name, exact: true }).click(); await expect(page.getByRole('heading', { name, exact: true, level: 1 })).toBeVisible();
+    await expect(page.getByRole('combobox', { name: 'Просматриваемый сервер' })).toHaveCount(['Пользователи', 'Конфигурация', 'Шейпер', 'Диагностика'].includes(name) ? 1 : 0);
+    await expect(page.getByText('Серверы для изменений')).toHaveCount(['Пользователи', 'Конфигурация', 'Шейпер'].includes(name) ? 1 : 0);
   }
   expect(errors).toEqual([]);
   await page.getByRole('navigation').getByRole('button', { name: 'Обзор', exact: true }).click();
@@ -82,7 +84,9 @@ test('shaping form retains its displayed revision across later configuration cha
 });
 
 test('WEB commands use the inspected process identity and one server target', async ({ page }) => {
-  await fixture(page, 'operator'); await page.getByLabel('Reserve', { exact: true }).check();
+  await fixture(page, 'operator');
+  await page.getByRole('navigation').getByRole('button', { name: 'Шейпер', exact: true }).click();
+  await page.getByLabel('Reserve', { exact: true }).check();
   await page.getByRole('navigation').getByRole('button', { name: 'Диагностика', exact: true }).click(); await page.getByRole('button', { name: 'Состояние WEB', exact: true }).click();
   const sent = page.waitForRequest(request => request.url().endsWith('/api/operations') && request.method() === 'POST');
   await page.getByRole('button', { name: 'Приостановить новые WEB-сессии' }).click(); const body = (await sent).postDataJSON();
@@ -284,6 +288,11 @@ test('redesign desktop themes and sidebar preferences persist', async ({ page },
   await page.reload();
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
   await expect(page.locator('[data-map-point]')).toHaveCount(3);
+  await expect(page.getByRole('button', { name: 'Свернуть меню' })).toBeVisible();
+  await expect(page.locator('.desktop-nav .nav-group-title')).toHaveText(['Панель управления', 'Инфраструктура', 'Трафик и доступ', 'Наблюдение', 'Отказоустойчивость', 'Система']);
+  await expect(page.getByText('Серверы для изменений')).toHaveCount(0);
+  await page.getByRole('button', { name: 'Свернуть меню' }).click();
+  await page.reload();
   await expect(page.getByRole('button', { name: 'Развернуть меню' })).toBeVisible();
   await page.getByRole('button', { name: 'Развернуть меню' }).click();
   await expect(page.locator('.sidebar .brand-name')).toBeVisible();
@@ -297,6 +306,7 @@ test('redesign desktop themes and sidebar preferences persist', async ({ page },
   await page.screenshot({ path: testInfo.outputPath('telemt-redesign-dark.png'), fullPage: true });
   await page.getByRole('navigation').getByRole('button', { name: 'Шейпер', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Политика шейпера' })).toBeVisible();
+  await expect(page.getByText('Серверы для изменений')).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath('telemt-redesign-shaping.png'), fullPage: true });
   await page.getByRole('combobox', { name: 'Тема оформления' }).selectOption('system');
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');

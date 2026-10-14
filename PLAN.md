@@ -199,3 +199,15 @@ Verification evidence (local, 2026-10-14):
 - Workflow syntax and root formatting checks passed. Full existing Linux core suite on Rust 1.88: 2563 passed, 0 failed, 73 ignored. The release-profile test link was killed with SIGKILL; the ordinary test profile with two jobs and no debug information passed. Production release images built successfully.
 - Live ACME issuance/renewal against a Cloudflare zone and two-network DNS failover are not executed: they require an external disposable DNS zone and probe networks. No production node/DNS changes, commits, pushes or GHCR publication were performed for this implementation.
 - Managed profiles support inter-server DNS switching. Existing single-server IP pools remain on direct-API nodes; migration with an attached pool and pool creation on a managed node are rejected explicitly.
+
+
+## Remnawave-inspired Fleet interface
+
+- [x] Inspect the reference frontend theme and navigation; preserve Fleet routes, roles and operations.
+- [x] Introduce grouped navigation, contextual page headers and scoped node controls.
+- [x] Apply coordinated light/dark styling to dashboard, tables, forms and mobile navigation; prioritize history charts in Overview.
+- [x] Verify production build, essential browser scenarios and desktop/mobile visuals.
+
+Reference: https://github.com/remnawave/frontend (theme and dashboard layout inspected; no source or assets copied).
+
+Verification: production build/typecheck and 27 existing unit checks passed. Eleven focused Chromium scenarios passed; after final layout refinements, four affected scenarios passed again, including all 14 pages, scoped controls, theme/sidebar persistence, mobile forms and detailed server metrics. Desktop light/dark and 390 px mobile screenshots were inspected. No new test suite, dependencies, backend changes or production deployment.
