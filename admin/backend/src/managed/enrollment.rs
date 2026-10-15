@@ -11,25 +11,29 @@ pub(crate) async fn route(state:&State,user:&Session,parts:&[&str],method:&Metho
             let name=crate::state::bounded_name(&body,"name")?;let profile=parse_id(field(&body,"profile_id")?)?;
             let ip:std::net::IpAddr=field(&body,"ip")?.parse().map_err(|_|bad())?;
             if ip.is_unspecified()||ip.is_multicast()||ip.is_loopback(){return Err(bad());}
+            let id=Uuid::new_v4();let enrollment=crypto::random();
+            let compose=compose(state,id,&enrollment)?;
             let mut tx=state.db.begin().await?;
             sqlx::query("SELECT pg_advisory_xact_lock($1)").bind(crate::state::DNS_COORDINATOR_LOCK).execute(&mut *tx).await?;
             let p=sqlx::query("SELECT domain,probe_cipher,published_revision FROM profiles WHERE id=$1 FOR UPDATE").bind(profile).fetch_one(&mut *tx).await?;
             if p.get::<i64,_>("published_revision")==0{return Err(ApiError(StatusCode::CONFLICT,"publish_profile_first"));}
-            let id=Uuid::new_v4();let token=format!("Bearer {}",crypto::random());let probe=state.vault.open(&p.get::<String,_>("probe_cipher"),&format!("profile-probe:{profile}"))?;
+            let token=format!("Bearer {}",crypto::random());let probe=state.vault.open(&p.get::<String,_>("probe_cipher"),&format!("profile-probe:{profile}"))?;
             let document=json!({"ipv4":if ip.is_ipv4(){Some(ip.to_string())}else{None},"ipv6":if ip.is_ipv6(){Some(ip.to_string())}else{None},"port":8443,"sni":p.get::<String,_>("domain"),"probe_dc":2,"managed":true,"profile_id":profile});
             sqlx::query("INSERT INTO nodes(id,name,token_cipher,probe_cipher,document) VALUES($1,$2,$3,$4,$5)").bind(id).bind(name).bind(state.vault.seal(&token,&format!("node:{id}"))?).bind(state.vault.seal(&probe,&format!("probe:{id}"))?).bind(document).execute(&mut *tx).await?;
-            let enrollment=crypto::random();
             sqlx::query("INSERT INTO managed_nodes(node_id,profile_id,enrollment_hash,enrollment_expires) VALUES($1,$2,$3,now()+interval '24 hours')").bind(id).bind(profile).bind(crypto::hash(&enrollment)).execute(&mut *tx).await?;
             crate::profiles::enqueue(state,&mut tx,id,Some(user.id)).await?;
-            let compose=compose(state,id,&enrollment)?;tx.commit().await?;
+            tx.commit().await?;
             audit(state,Some(user.id),"node.enrollment.create",&id.to_string(),json!({"profile":profile})).await?;
             Ok(Json(ok(json!({"id":id,"compose":compose,"expires_in_seconds":86400}))))
         }
         ["nodes",id,"enrollment"] if *method==Method::POST=>{
-            let id=parse_id(id)?;let token=crypto::random();let row=sqlx::query("UPDATE managed_nodes SET enrollment_hash=$2,enrollment_expires=now()+interval '24 hours' WHERE node_id=$1 AND credential_hash IS NULL AND NOT revoked RETURNING node_id").bind(id).bind(crypto::hash(&token)).fetch_optional(&state.db).await?;
+            let id=parse_id(id)?;let token=crypto::random();
+            // A failed Compose configuration must not invalidate a previously issued token.
+            let compose=compose(state,id,&token)?;
+            let row=sqlx::query("UPDATE managed_nodes SET enrollment_hash=$2,enrollment_expires=now()+interval '24 hours' WHERE node_id=$1 AND credential_hash IS NULL AND NOT revoked RETURNING node_id").bind(id).bind(crypto::hash(&token)).fetch_optional(&state.db).await?;
             if row.is_none(){return Err(ApiError(StatusCode::CONFLICT,"node_already_registered"));}
             audit(state,Some(user.id),"node.enrollment.renew",&id.to_string(),json!({})).await?;
-            Ok(Json(ok(json!({"compose":compose(state,id,&token)?,"expires_in_seconds":86400}))))
+            Ok(Json(ok(json!({"compose":compose,"expires_in_seconds":86400}))))
         }
         ["nodes",id,"redeploy"] if *method==Method::POST=>{
             let id=parse_id(id)?;let mut tx=state.db.begin().await?;let deployment=crate::profiles::enqueue(state,&mut tx,id,Some(user.id)).await?;tx.commit().await?;
@@ -59,11 +63,37 @@ pub(crate) async fn route(state:&State,user:&Session,parts:&[&str],method:&Metho
 }
 fn compose(state:&State,id:Uuid,token:&str)->Result<String>{
     let image=std::env::var("MANAGED_NODE_IMAGE").map_err(|_|ApiError(StatusCode::CONFLICT,"managed_image_not_configured"))?;
-    let Some((name,digest))=image.split_once("@sha256:")else{return Err(bad());};
-    if !name.starts_with("ghcr.io/")||name.contains(['\n','\r','\"','\'','$',' '])||digest.len()!=64||hex::decode(digest).is_err(){return Err(bad());}
+    validate_image(&image)?;
     // JSON scalars are valid YAML and avoid interpreting names or origins as Compose interpolation.
     let origin=serde_json::to_string(state.origin.as_ref()).map_err(|_|bad())?;
     Ok(format!("name: telemt-managed\nservices:\n  node:\n    image: {image}\n    network_mode: host\n    restart: unless-stopped\n    read_only: true\n    cap_drop: [ALL]\n    cap_add: [NET_BIND_SERVICE, SETUID, SETGID, CHOWN, KILL]\n    security_opt: [no-new-privileges:true]\n    stop_grace_period: 70s\n    stop_signal: SIGTERM\n    tmpfs: [/tmp]\n    environment:\n      FLEET_URL: {origin}\n      NODE_ID: {id}\n      ENROLLMENT_TOKEN: {token}\n    volumes: [state:/var/lib/telemt-managed]\n    ulimits:\n      nofile: {{soft: 65536, hard: 262144}}\n    healthcheck:\n      test: [CMD, /app/telemt-node-agent, healthcheck]\n      interval: 30s\n      timeout: 5s\n      retries: 3\n    logging:\n      driver: json-file\n      options: {{max-size: 50m, max-file: '3'}}\nvolumes:\n  state:\n"))
+}
+
+// Compose supplies an empty string for an unset variable; absence and emptiness are equivalent.
+fn validate_image(image:&str)->Result<()> {
+    if image.trim().is_empty(){return Err(ApiError(StatusCode::CONFLICT,"managed_image_not_configured"));}
+    let invalid=||ApiError(StatusCode::CONFLICT,"managed_image_invalid");
+    let Some((name,digest))=image.split_once("@sha256:")else{return Err(invalid());};
+    if !name.starts_with("ghcr.io/")||name.contains(['\n','\r','\"','\'','$',' '])||digest.len()!=64||hex::decode(digest).is_err(){return Err(invalid());}
+    Ok(())
+}
+
+#[cfg(test)]
+mod image_tests {
+    use super::*;
+
+    #[test]
+    fn enrollment_image_errors_identify_fleet_configuration() {
+        for image in ["", " \t\n"] {
+            let error=validate_image(image).unwrap_err();
+            assert_eq!(error.0,StatusCode::CONFLICT);
+            assert_eq!(error.1,"managed_image_not_configured");
+        }
+        for image in ["ghcr.io/efinskiy/telemt-managed-node:latest", "ghcr.io/efinskiy/telemt-managed-node@sha256:invalid"] {
+            assert_eq!(validate_image(image).unwrap_err().1,"managed_image_invalid");
+        }
+        assert!(validate_image(&format!("ghcr.io/efinskiy/telemt-managed-node@sha256:{}","a".repeat(64))).is_ok());
+    }
 }
 
 /// Enrollment and polling never accept a browser session or an external target URL.

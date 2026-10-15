@@ -27,6 +27,15 @@ No Docker socket, SSH access or public node Control API is required.
    The wizard rejects mutable tags. Recreate the Fleet admin service with your existing
    local-build or registry Compose invocation. This variable affects newly generated files;
    it does not silently replace running node binaries.
+   If enrollment reports `managed_image_not_configured`, inspect the effective value
+   with `docker compose -f compose.yml exec -T admin printenv MANAGED_NODE_IMAGE`.
+   An empty value has the same meaning as an unset variable. Older Fleet versions
+   report this condition as `invalid_request`, even when the form is correct.
+   Set only this key in the existing `.env`; do not overwrite the file.
+   A container restart does not reload Compose environment variables: use
+   `up -d --no-deps --no-build admin` with the same Compose files used for deployment.
+   `managed_image_invalid` means the value is not a GHCR reference pinned to a
+   64-character SHA-256 digest. Resolve the manifest digest as above; do not invent it.
 5. Fleet's HTTPS reverse proxy must forward `/node-agent/v1/` to the backend without a
    browser login challenge. The supplied nginx configuration already forwards these paths.
    Agent requests authenticate using individual credentials. Keep Fleet's HTTPS domain

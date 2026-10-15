@@ -2,6 +2,7 @@ import { diagnosticLabels } from './diagnostic-labels';
 import { descriptions } from './config-descriptions';
 /** Russian presentation labels never replace serialized protocol values. */
 const labels: Record<string, string> = {
+  node_name: 'Сервер', reachable: 'Доступность', stage: 'Этап проверки', network_ok: 'Сеть агента доступна', web_checked: 'WEB проверен',
   native: 'MTProxy', web_port: 'Порт WEB', native_port: 'Порт MTProxy',
   id:'Идентификатор', name:'Название', username:'Пользователь', user:'Пользователь', role:'Роль', enabled:'Включено', available:'Доступно', unavailable:'Недоступно', status:'Состояние', state:'Состояние', reason:'Причина', error:'Ошибка', errors:'Ошибки', code:'Код', message:'Сообщение', description:'Описание',
   registration:'Подключение',  collected_at:'Обновлено', created_at:'Создано', updated_at:'Изменено', completed_at:'Завершено', at:'Время', last_seen:'Последняя связь', automatic:'Автоматика', active_node:'Активный сервер', node_id:'Сервер', node_ids:'Серверы', group_id:'Группа', actor:'Администратор', action:'Действие', target:'Объект', outcome:'Результат', result:'Результат', results:'Результаты', round:'Раунд', network:'Сеть', country:'Страна', family:'Семейство IP',
@@ -44,6 +45,7 @@ const errors: Record<string, string> = {
   profile_dns_port_mismatch: 'Порт профиля отличается от порта DNS-группы. Отвяжите группу перед изменением порта, затем настройте её заново.',
   staging_requires_test_trust: 'Тестовый ACME доступен только на изолированном стенде с настроенным доверенным тестовым CA.',
   managed_image_not_configured:'В конфигурации Fleet задайте MANAGED_NODE_IMAGE с digest опубликованного образа GHCR.',
+  managed_image_invalid:'MANAGED_NODE_IMAGE в конфигурации Fleet должен иметь вид ghcr.io/владелец/образ@sha256:<64 hex-символа>. Тег latest или main не подходит. Исправьте .env и пересоздайте сервис admin.',
  managed_profile_owned:'Настройки этой ноды принадлежат общему профилю.',
  managed_node_not_ready:'Нода ещё не подтвердила требуемую конфигурацию и сертификат.',
  node_already_registered:'Токен уже использован. Сохраните локальный том состояния ноды.',

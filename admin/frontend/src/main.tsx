@@ -33,7 +33,7 @@ function App() {
     {node && page === 'Шейпер' && <Shaping key={node.id} nodeId={node.id}  />}
     {node && page === 'Диагностика' && <Diagnostics key={node.id} nodeId={node.id} canWrite={canWrite} run={run} />}
     {page === 'Общие профили' && <Profiles user={user} groups={groups} nodes={nodes} run={run} />}{page === 'Сертификаты' && <Certificates user={user} run={run} />}
-    {page === 'Внешние проверки' && <Probes user={user} run={run} />}{page === 'Переключение DNS' && <Failover nodes={nodes} groups={groups} user={user} run={run} refresh={() => run(refresh)} />}
+    {page === 'Внешние проверки' && <Probes user={user} run={run} nodes={nodes} />}{page === 'Переключение DNS' && <Failover nodes={nodes} groups={groups} user={user} run={run} refresh={() => run(refresh)} />}
     {page === 'Ротация IP' && <IPRotation nodes={nodes} groups={groups} user={user} run={run} />}
     {page === 'Операции' && <Operations rows={operations} run={run} refresh={() => run(refresh)} />}{page === 'Аудит' && <Audit run={run} />}{page === 'Администраторы' && user.role === 'owner' && <Administrators run={run} />}
     <footer><span>telemt <b>Fleet</b></span><span>Ноды работают автономно при недоступности кабинета.</span></footer></main></div>;

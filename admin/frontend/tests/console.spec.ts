@@ -163,6 +163,7 @@ test('diagnostics renders named facts and ignores responses from an abandoned ta
   await page.getByRole('navigation').getByRole('button',{name:'Диагностика',exact:true}).click();
   await page.getByRole('button',{name:'NAT / STUN',exact:true}).click();
   await expect(page.getByText('Проверки NAT включены',{exact:true})).toBeVisible();
+  await page.locator('summary').filter({hasText:'STUN'}).click();
   await expect(page.getByText('Действующих серверов',{exact:true})).toBeVisible();
   await page.waitForTimeout(500);
   await expect(page.getByText('Недостающие соединения',{exact:true})).toHaveCount(0);

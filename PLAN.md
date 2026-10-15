@@ -238,3 +238,20 @@ Verification (local, 2026-10-14):
 - [x] Verify production frontend build and one focused desktop/mobile browser scenario; compile-check the small node API change without Rust tests.
 
 Verification: production frontend build/typecheck passed. One focused Chromium scenario passed (4.1 seconds including build), covering both pages at desktop and 390 px, directional totals, live IP/account/connection distinctions, stale data and viewer permissions. Desktop/mobile screenshots inspected. Linux Rust 1.88 `cargo check --locked --offline -j 2` passed in 52 seconds with the same 44 pre-existing warnings; no Rust tests or full frontend suite were run. The sandbox prevented the initial Chrome launch; the same single scenario passed with browser execution permitted. No production deployment or Git push.
+
+## Managed-node enrollment configuration diagnostics
+
+- [x] Identify the blank MANAGED_NODE_IMAGE supplied by Compose as the cause of misleading invalid_request.
+- [x] Distinguish missing/empty image configuration from invalid image references; validate before enrollment creation or token renewal writes.
+- [x] Run one targeted backend regression check and frontend typecheck; document operator recovery without replacing .env.
+
+Verification: the single enrollment-image regression test and frontend TypeScript check passed. The production blank environment value was confirmed by the operator. GHCR main manifest was read successfully and includes linux/amd64 and linux/arm64. No production configuration was modified; no broader test suite was run.
+
+## Compact Fleet data presentation
+
+- [x] Replace nested payloads in table cells with compact detail inspectors and paginate long tables.
+- [x] Render diagnostic values as compact key/value rows; expand nested objects and array pages on demand.
+- [x] Show probe server names, actual IPs, protocol statuses and latencies without duplicating payloads inline.
+- [x] Verify frontend build and one focused browser scenario, including details, pagination and mobile layout.
+
+Verification: frontend production build/typecheck and one focused Chromium scenario passed; the same scenario was rerun after mobile spacing changes. Covered compact protocol rows (<110 px), node names/IPs, latency, unknown network state, collapsed detail inspection, Escape, 25-row pagination and generic audit payloads. Desktop/detail/mobile screenshots inspected. No Rust or full frontend test suites were run.
