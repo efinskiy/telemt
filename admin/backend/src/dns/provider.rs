@@ -23,7 +23,13 @@ pub(crate) async fn read_records(state:&State,document:&Value,token:&str)->anyho
     }Ok(records)
 }
 
+/// Automatic and ordinary manual switches require endpoint-scoped probe evidence.
 pub(super) async fn eligible(state:&State,group:&sqlx::postgres::PgRow,target:Uuid)->Result<Value> {
+    eligible_mode(state,group,target,false).await
+}
+
+/// Forced selection retains node admission while using its configured address without probe evidence.
+pub(super) async fn eligible_mode(state:&State,group:&sqlx::postgres::PgRow,target:Uuid,forced:bool)->Result<Value> {
     if !crate::managed::admission::ready(state,target).await? {return Err(ApiError(StatusCode::CONFLICT,"managed_node_not_ready"));}
     crate::rotation::selection::same_profile(state,group,target).await?;
     let document:Value=group.get("document");let nodes=document["node_ids"].as_array().ok_or_else(bad)?;
@@ -39,7 +45,7 @@ pub(super) async fn eligible(state:&State,group:&sqlx::postgres::PgRow,target:Uu
     let mut intent=json!({});
     for (key,family,version) in [("record_a_id","A",4),("record_aaaa_id","AAAA",6)] {
         if document[key].as_str().is_none_or(|s|s.is_empty()){continue;}
-        let ip=crate::rotation::selection::candidate(state,target,version==4).await?;
+        let ip=if forced {crate::rotation::selection::configured(state,target,version==4).await?}else{crate::rotation::selection::candidate(state,target,version==4).await?};
         intent[family]=json!({"id":document[key],"content":ip,"ttl":60,"proxied":false});
     }Ok(intent)
 }
@@ -55,27 +61,36 @@ pub(super) async fn change(state:&State,id:Uuid,target:Uuid,actor:Option<Uuid>)-
     let mut connection=state.db.begin().await?;
     let locked:bool=sqlx::query_scalar("SELECT pg_try_advisory_xact_lock($1)").bind(crate::state::DNS_COORDINATOR_LOCK).fetch_one(&mut *connection).await?;
     if !locked{return Err(ApiError(axum::http::StatusCode::CONFLICT,"dns_coordinator_busy"));}
-    let result=write_owned(state,id,target,actor,None).await;
+    let result=write_owned(state,id,target,actor,None,None).await;
     connection.rollback().await?;
     result
 }
 
 /// The caller must hold the shared DNS coordinator transaction lock.
 pub(crate) async fn rotate_locked(state:&State,id:Uuid,node:Uuid,actor:Option<Uuid>,rotation:Uuid,intent:Value)->Result<()> {
-    write_owned(state,id,node,actor,Some((rotation,intent))).await
+    write_owned(state,id,node,actor,Some((rotation,intent)),None).await
 }
 
-async fn write_owned(state:&State,id:Uuid,target:Uuid,actor:Option<Uuid>,rotation:Option<(Uuid,Value)>)->Result<()> {
+/// The owner route holds the shared coordinator lock and requires a matching preview.
+pub(super) async fn force_locked(state:&State,id:Uuid,target:Uuid,actor:Uuid,preview:&Value)->Result<()> {
+    write_owned(state,id,target,Some(actor),None,Some(preview)).await
+}
+
+async fn write_owned(state:&State,id:Uuid,target:Uuid,actor:Option<Uuid>,rotation:Option<(Uuid,Value)>,forced:Option<&Value>)->Result<()> {
     if rotation.is_none() { guard_pool(state,id).await?; }
     let group=load(state,id).await?;
-    if rotation.is_none() && let Some(active)=group.get::<Option<Uuid>,_>("active_node") && active!=target && !crate::rotation::selection::exhausted(state,active).await? {
+    if forced.is_none() && rotation.is_none() && let Some(active)=group.get::<Option<Uuid>,_>("active_node") && active!=target && !crate::rotation::selection::exhausted(state,active).await? {
         return Err(ApiError(StatusCode::CONFLICT,"current_node_addresses_not_exhausted"));
     }
     if rotation.is_none() && actor.is_none() && !group.get::<bool,_>("automatic") { return Err(ApiError(axum::http::StatusCode::CONFLICT,"dns_automation_disabled")); }
-    if fresh(group.get("last_switch"),300)||record_cooldown(state,&group.get::<Value,_>("document")).await?{return Err(ApiError(axum::http::StatusCode::CONFLICT,"dns_cooldown"));}
+    if forced.is_none() && (fresh(group.get("last_switch"),300)||record_cooldown(state,&group.get::<Value,_>("document")).await?){return Err(ApiError(axum::http::StatusCode::CONFLICT,"dns_cooldown"));}
     let pending:i64=sqlx::query_scalar("SELECT count(*) FROM dns_changes WHERE group_id=$1 AND state IN ('writing','unknown')").bind(id).fetch_one(&state.db).await?;
     if pending>0{return Err(ApiError(axum::http::StatusCode::CONFLICT,"dns_outcome_unknown"));}
-    let intent=if let Some((_,intent))=&rotation{intent.clone()}else{eligible(state,&group,target).await?};let document:Value=group.get("document");
+    let intent=if let Some(preview)=forced {
+        let current=super::forced::preview(state,&group,target).await?;
+        if &current!=preview{return Err(ApiError(StatusCode::CONFLICT,"dns_preview_changed"));}
+        current["intent"].clone()
+    }else if let Some((_,intent))=&rotation{intent.clone()}else{eligible(state,&group,target).await?};let document:Value=group.get("document");
     let token=state.vault.open(&group.get::<String,_>("token_cipher"),&format!("dns:{id}"))?;
     let observed=read_records(state,&document,&token).await?;let expected:Value=group.get("observed");
     if observed!=expected {
@@ -86,6 +101,13 @@ async fn write_owned(state:&State,id:Uuid,target:Uuid,actor:Option<Uuid>,rotatio
     // This committed intent survives a crash between Cloudflare accepting the update and its response.
     let mut intent_tx=state.db.begin().await?;
     sqlx::query("INSERT INTO dns_changes(id,group_id,actor,old_node,new_node,intent,state) VALUES($1,$2,$3,$4,$5,$6,'writing')").bind(change).bind(id).bind(actor).bind(old).bind(target).bind(&intent).execute(&mut *intent_tx).await?;
+    if forced.is_some() {
+        // Persist the manual pin with the intent, including uncertain Cloudflare outcomes.
+        sqlx::query("UPDATE failover_groups SET automatic=false WHERE id=$1").bind(id).execute(&mut *intent_tx).await?;
+        sqlx::query("UPDATE profiles SET resume_automatic=false WHERE group_id=$1").bind(id).execute(&mut *intent_tx).await?;
+        sqlx::query("UPDATE ip_pools SET automatic=false,updated_at=now() WHERE group_id=$1").bind(id).execute(&mut *intent_tx).await?;
+        sqlx::query("INSERT INTO audit(actor,action,target,outcome) VALUES($1,'dns.force_submit',$2,$3)").bind(actor).bind(change.to_string()).bind(json!({"group":id,"old_node":old,"new_node":target,"intent":intent,"probe_quorum_bypassed":true,"cooldown_bypassed":true,"local_exhaustion_bypassed":true,"automation_paused":true})).execute(&mut *intent_tx).await?;
+    }
     if let Some((rotation,_))=rotation {
         sqlx::query("UPDATE ip_rotations SET state='dns_pending',dns_change=$2,updated_at=now() WHERE id=$1 AND state='queued'").bind(rotation).bind(change).execute(&mut *intent_tx).await?;
     }
@@ -158,13 +180,14 @@ pub(super) async fn repair(state:&State,id:Uuid,target:Uuid,expected:&Value,acto
         sqlx::query("UPDATE failover_groups SET observed=$2,automatic=false WHERE id=$1").bind(id).bind(actual).execute(&mut *tx).await?;
         sqlx::query("UPDATE dns_changes SET state='failed',result=$2 WHERE group_id=$1 AND state IN ('writing','unknown')").bind(id).bind(json!({"reason":"superseded_by_owner_repair","actor":actor})).execute(&mut *tx).await?;
         sqlx::query("INSERT INTO audit(actor,action,target,outcome) VALUES($1,'dns.repair_acknowledged',$2,$3)").bind(actor).bind(id.to_string()).bind(json!({"node":target})).execute(&mut *tx).await?;tx.commit().await?;
-        write_owned(state,id,target,Some(actor),None).await
+        write_owned(state,id,target,Some(actor),None,None).await
     }.await;
     connection.rollback().await?;result
 }
 
 
-async fn guard_pool(state:&State,id:Uuid)->Result<()> {
+/// An unresolved local rotation retains ownership of the group DNS records.
+pub(super) async fn guard_pool(state:&State,id:Uuid)->Result<()> {
     let owned:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM ip_pools p JOIN ip_rotations r ON r.pool_id=p.id WHERE p.group_id=$1 AND r.state IN('queued','dns_pending','unknown'))").bind(id).fetch_one(&state.db).await?;
     if owned{return Err(ApiError(axum::http::StatusCode::CONFLICT,"ip_rotation_pending_requires_reconciliation"));}Ok(())
 }

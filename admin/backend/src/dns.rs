@@ -7,6 +7,7 @@ use uuid::Uuid;
 use crate::{auth::Session,error::{Result,bad,ApiError},state::{State,field,parse_id,ok,audit,fresh},probes::{self,Health}};
 pub(crate) mod provider;
 mod management;
+mod forced;
 use provider::{read_records,eligible,change};
 
 pub(crate) async fn route(state:&State,user:&Session,parts:&[&str],method:&Method,body:Value)->Result<Json<Value>> {
@@ -67,6 +68,7 @@ pub(crate) async fn route(state:&State,user:&Session,parts:&[&str],method:&Metho
         ["groups",id,"repair"] if *method==Method::POST=>{user.require("owner")?;provider::repair(state,parse_id(id)?,parse_id(field(&body,"node_id")?)?,body.get("expected_records").ok_or_else(bad)?,user.id).await?;Ok(Json(ok(json!({}))))}
         ["groups",id,"verify-configuration"] if *method==Method::POST=>management::verify(state,user,parse_id(id)?,&body).await,
         ["groups",id,"preview"] if *method==Method::POST=>{user.require("owner")?;let id=parse_id(id)?;let target=parse_id(field(&body,"node_id")?)?;let group=load(state,id).await?;let intent=eligible(state,&group,target).await?;Ok(Json(ok(json!({"node_id":target,"intent":intent,"ttl":60,"dns_only":true}))))}
+        ["groups",id,action @ ("force-preview"|"force-switch")] if *method==Method::POST=>forced::route(state,user,parse_id(id)?,action,&body).await,
         ["groups",id,"switch"] if *method==Method::POST=>{user.require("owner")?;change(state,parse_id(id)?,parse_id(field(&body,"node_id")?)?,Some(user.id)).await?;Ok(Json(ok(json!({}))))}
         ["groups",id,"reconcile"] if *method==Method::POST=>{user.require("owner")?;provider::recover(state,parse_id(id)?).await?;Ok(Json(ok(json!({}))))}
         ["groups",id,"history"] if *method==Method::GET=>{let rows=sqlx::query("SELECT id,old_node,new_node,intent,state,result,created_at FROM dns_changes WHERE group_id=$1 ORDER BY created_at DESC LIMIT 100").bind(parse_id(id)?).fetch_all(&state.db).await?;Ok(Json(ok(json!(rows.into_iter().map(|r|json!({"id":r.get::<Uuid,_>("id"),"old_node":r.get::<Option<Uuid>,_>("old_node"),"new_node":r.get::<Uuid,_>("new_node"),"intent":r.get::<Value,_>("intent"),"state":r.get::<String,_>("state"),"result":r.get::<Value,_>("result"),"created_at":r.get::<DateTime<Utc>,_>("created_at")})).collect::<Vec<_>>()))))}

@@ -293,3 +293,45 @@ test('sustained IP policy exposes separate idle caps and recovery state', async 
   await expect(page.getByText('Потолок объёмного получения без конкуренции, бит/с',{exact:true})).toBeVisible();
   await expect(page.getByRole('button', { name: 'Применить политику шейпера' })).toHaveCount(0);
 });
+
+test('forced server switch previews DNS, fences stale confirmation and respects owner role', async ({ page }, testInfo) => {
+  await fixture(page, 'owner');
+  let group = { id: 'forced-group', name: 'Proxy group', active_node: first, automatic: true, status: 'healthy', document: { node_ids: [first, second] }, observed: { A: { content: '192.0.2.1' } } };
+  const preview = { old_node: first, node_id: second, observed: group.observed, intent: { A: { content: '192.0.2.2', ttl: 60, proxied: false } }, deployment: 7 };
+  let attempts = 0;
+  await page.route('**/api/groups', route => route.fulfill({ json: { ok: true, data: [group] } }));
+  await page.route('**/api/groups/forced-group/force-preview', route => route.fulfill({ json: { ok: true, data: preview } }));
+  await page.route('**/api/groups/forced-group/force-switch', route => {
+    expect(route.request().postDataJSON()).toEqual({ node_id: second, preview }); attempts++;
+    if (attempts === 1) return route.fulfill({ status: 409, json: { ok: false, error: { code: 'dns_preview_changed' } } });
+    group = { ...group, active_node: second, automatic: false, observed: { A: { content: '192.0.2.2' } } };
+    return route.fulfill({ json: { ok: true, data: {} } });
+  });
+  await page.getByRole('button', { name: 'Обновить', exact: true }).click();
+  await page.getByRole('navigation').getByRole('button', { name: 'Переключение DNS', exact: true }).click();
+  await page.getByRole('button', { name: 'Сменить активный сервер', exact: true }).click();
+  const dialog = page.getByRole('dialog');
+  await expect(dialog.getByRole('button', { name: 'Проверить и показать DNS' })).toBeDisabled();
+  await dialog.getByLabel('Новый активный сервер').selectOption(second);
+  await dialog.getByRole('button', { name: 'Проверить и показать DNS' }).click();
+  await expect(dialog.getByRole('cell', { name: '192.0.2.2', exact: true })).toBeVisible();
+  await expect(dialog.getByText('Primary → Reserve')).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath('forced-switch-desktop.png'), fullPage: true });
+  await dialog.getByRole('button', { name: 'Подтвердить переключение' }).click();
+  await expect(dialog.getByRole('alert')).toContainText('изменились после предпросмотра');
+  await expect(dialog.getByRole('button', { name: 'Подтвердить переключение' })).toHaveCount(0);
+  await dialog.getByRole('button', { name: 'Проверить и показать DNS' }).click();
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
+  await page.screenshot({ path: testInfo.outputPath('forced-switch-mobile.png'), fullPage: true });
+  await dialog.getByRole('button', { name: 'Подтвердить переключение' }).click();
+  await expect(dialog).toHaveCount(0);
+  await expect(page.getByRole('row').filter({ hasText: 'Proxy group' })).toContainText('Reserve');
+  expect(attempts).toBe(2);
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await fixture(page, 'viewer');
+  await page.route('**/api/groups', route => route.fulfill({ json: { ok: true, data: [group] } }));
+  await page.getByRole('button', { name: 'Обновить', exact: true }).click();
+  await page.getByRole('navigation').getByRole('button', { name: 'Переключение DNS', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Сменить активный сервер', exact: true })).toHaveCount(0);
+});

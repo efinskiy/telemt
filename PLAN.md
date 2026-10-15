@@ -255,3 +255,12 @@ Verification: the single enrollment-image regression test and frontend TypeScrip
 - [x] Verify frontend build and one focused browser scenario, including details, pagination and mobile layout.
 
 Verification: frontend production build/typecheck and one focused Chromium scenario passed; the same scenario was rerun after mobile spacing changes. Covered compact protocol rows (<110 px), node names/IPs, latency, unknown network state, collapsed detail inspection, Escape, 25-row pagination and generic audit payloads. Desktop/detail/mobile screenshots inspected. No Rust or full frontend test suites were run.
+
+
+## Forced active-server switch
+
+- [x] Add owner-only preview and forced switch without probe quorum, local IP exhaustion or cooldown; preserve readiness, compatibility and DNS reconciliation fences.
+- [x] Add a compact server-selection dialog with explicit DNS changes and pause automation on manual switching.
+- [x] Verify backend and one focused frontend scenario; leave production DNS untouched.
+
+Verification: Rust 1.88 backend check passed. One PostgreSQL/router integration test passed (7 seconds), extended with forced A/AAAA switching without probe evidence during cooldown, unchanged preview/readiness/unknown-write/external-conflict gates, owner/CSRF restrictions, and atomic group/profile/IP-pool automation pause. Frontend production build/typecheck and one Chromium scenario passed (3.2 seconds including build), covering stale preview rejection, confirmation, owner visibility and desktop/mobile layout; screenshots inspected. Initial scenario retries corrected fixture cleanup and mobile navigation only. No full suite, production DNS write, deployment, commit or push was performed.

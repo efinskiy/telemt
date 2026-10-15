@@ -10,6 +10,7 @@ mod rotation_cases;
 mod connection_maps;
 mod node_api_urls;
 mod dns_enrollment;
+mod forced_switch;
 mod managed_fixture;
 
 #[derive(Clone)]struct Mock {config:Arc<std::sync::Mutex<Value>>,revision:Arc<std::sync::Mutex<String>>,records:Arc<std::sync::Mutex<HashMap<String,Value>>>,fail_patch:Arc<std::sync::atomic::AtomicBool>,stall_patch:Arc<std::sync::atomic::AtomicBool>,patch_started:Arc<tokio::sync::Notify>,user_ready:Arc<std::sync::atomic::AtomicBool>}
@@ -162,6 +163,7 @@ async fn postgres_router_auth_operations_probes_and_dns() {
     assert_eq!(request(&app,&format!("/api/groups/{group}/verify-configuration"),"POST",json!({}),Some(&owner),true).await.0,StatusCode::OK);
     assert_eq!(request(&app,&format!("/api/groups/{group}"),"DELETE",json!({}),Some(&owner),true).await.0,StatusCode::OK);
     assert_eq!(mock.records.lock().unwrap()["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"]["content"],"192.0.2.99");
+    forced_switch::run(&state,&app,&mock,&nodes,&owner,&viewer).await;
     rotation_cases::run(&state,&app,&mock,&nodes,&owner,&viewer,&agents).await;
     let (_,session,_)=request(&app,"/api/session","GET",json!({}),Some(&owner),false).await;assert_eq!(session["data"]["csrf"],owner.1);
     assert_eq!(request(&app,"/api/logout","POST",json!({}),Some(&owner),true).await.0,StatusCode::OK);

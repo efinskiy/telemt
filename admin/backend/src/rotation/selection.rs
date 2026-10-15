@@ -34,3 +34,12 @@ pub(crate) async fn candidate(state:&State,node_id:Uuid,ipv4:bool)->Result<Strin
     for ip in addresses {if ip.parse::<std::net::IpAddr>().map_err(|_|bad())?.is_ipv4()==ipv4 && matches!(health(state,node_id,&ip).await?,Health::Healthy|Health::Recovered){return Ok(ip);}}
     Err(conflict("reserve_without_probe_quorum"))
 }
+
+/// Manual server selection uses its configured address without inferring external reachability.
+pub(crate) async fn configured(state:&State,node_id:Uuid,ipv4:bool)->Result<String> {
+    if let Some(pool)=sqlx::query("SELECT * FROM ip_pools WHERE node_id=$1").bind(node_id).fetch_optional(&state.db).await? {workflow::ready(state,&pool).await?;}
+    let doc:Value=node(state,node_id).await?.get("document");
+    let ip=doc[if ipv4{"ipv4"}else{"ipv6"}].as_str().ok_or(conflict("reserve_ip_not_prepared"))?;
+    if !ip.parse::<std::net::IpAddr>().is_ok_and(|address|address.is_ipv4()==ipv4){return Err(conflict("reserve_ip_not_prepared"));}
+    Ok(ip.to_owned())
+}
