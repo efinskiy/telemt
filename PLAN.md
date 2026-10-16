@@ -331,3 +331,12 @@ Initial timeout-policy checks passed before the user changed the probe target. F
 Final verification: Rust 1.88 passed two backend policy tests, one real loopback SSH-banner/silent-TLS probe test and the existing PostgreSQL/router integration (7.09 seconds). The production probe configuration passed cargo check --locked --offline. One Chromium desktop/mobile scenario passed (4.3 seconds including frontend production build/typecheck); desktop screenshot inspected. Browser startup initially failed in the sandbox and passed with local execution permissions. Temporary PostgreSQL stopped. No production DNS writes, deployments, commit or push.
 
 A current-round success or unknown result also interrupts an older timeout streak immediately; the two focused policy tests passed after this final boundary check.
+
+## Telegram single-message navigation (2026-10-17)
+
+- [x] Persist the active menu message per authorized chat and invalidate it on bot token/access reset.
+- [x] Edit plain/rich navigation, wizard prompts, confirmations and errors; keep Compose documents and event notifications separate.
+- [x] Treat unchanged content as success and replace only definitively unavailable messages, without resending after uncertain transport failures.
+- [x] Run the existing focused PostgreSQL/router bot integration with edit/reuse/deleted-message assertions.
+
+Verification: Rust 1.88 compilation and one PostgreSQL/router integration passed (7.12 seconds), including the migration, plain/rich edits, free-text wizard steps, confirmations/errors, unchanged-content handling, deleted-message replacement and no duplicate send after a provider failure. Existing access/replay/document assertions remain intact. git diff --check passed; temporary PostgreSQL stopped. Telegram used a local mock; no production messages, deployment, commit or push.

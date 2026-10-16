@@ -28,6 +28,7 @@ pub(crate) async fn lock_settings(tx:&mut sqlx::Transaction<'_,sqlx::Postgres>)-
 pub(crate) async fn reset(tx:&mut sqlx::Transaction<'_,sqlx::Postgres>)->Result<()> {
     sqlx::query("UPDATE telegram_bot_settings SET revision=revision+1,update_offset=NULL,username=NULL,last_error=NULL,next_poll_at=now() WHERE singleton").execute(&mut **tx).await?;
     sqlx::query("DELETE FROM telegram_bot_sessions").execute(&mut **tx).await?;
+    sqlx::query("UPDATE telegram_bot_access SET menu_message_id=NULL").execute(&mut **tx).await?;
     sqlx::query("UPDATE telegram_bot_actions SET status='cancelled' WHERE status='pending'").execute(&mut **tx).await?;Ok(())
 }
 
@@ -93,12 +94,18 @@ async fn handle(state:&State,token:&str,revision:i64,update:&Value)->Result<()> 
         if ["/start","/id"].contains(&input){transport::message(state,token,telegram,&format!("Ваш Telegram ID: {telegram}. Доступ к Fleet не настроен. Попросите владельца добавить этот ID в «Система → Telegram-бот»."),vec![]).await?;}
         return Ok(());
     };
+    if callback.is_some() {
+        let Some(message_id)=message["message_id"].as_i64().filter(|id|*id>0&&*id<=i32::MAX as i64)else{return Ok(());};
+        // Only an authorized private-chat callback may select the message being updated.
+        sqlx::query("UPDATE telegram_bot_access SET menu_message_id=$2 WHERE telegram_id=$1").bind(telegram).bind(message_id).execute(&state.db).await?;
+    }
     if let Some(id)=callback.and_then(|c|c["id"].as_str()).filter(|id|id.len()<=256) {
         let _=transport::call(state,token,"answerCallbackQuery",json!({"callback_query_id":id})).await;
     }
     let result=conversation::handle(state,token,&user,telegram,revision,input,callback.is_some()).await;
     if let Err(error)=result {
-        if error.1=="telegram_rate_limited"{return Err(error);}
+        // Delivery may already have succeeded; do not send a second message to report its failure.
+        if matches!(error.1,"telegram_rate_limited"|"telegram_transport_error"|"telegram_api_error"|"telegram_response_too_large"|"telegram_invalid_token"|"telegram_forbidden"|"telegram_poll_conflict"){return Err(error);}
         transport::message(state,token,telegram,&format!("{}\nКод: {}",transport::explain(error.1),error.1),vec![vec![transport::button("Главное меню","menu")]]).await?;
     }
     Ok(())
