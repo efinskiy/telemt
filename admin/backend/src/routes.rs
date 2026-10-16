@@ -16,6 +16,7 @@ pub(crate) async fn dispatch(ExtractState(state):ExtractState<State>,Path(path):
     let body:Value=if bytes.is_empty(){json!({})}else{serde_json::from_slice(&bytes).map_err(|_|bad())?};
     let parts:Vec<_>=path.split('/').collect();
     match parts.as_slice() {
+        ["telegram-bot",..]=>crate::telegram_bot::route(&state,&user,&parts,&method,body).await,
         ["notifications",..]=>crate::notifications::route(&state,&user,&parts,&method,body).await,
         ["profiles",..]=>crate::profiles::route(&state,&user,&parts,&method,&headers,body).await,
         ["certificates",..]=>crate::certificates::route(&state,&user,&parts,&method,body).await,

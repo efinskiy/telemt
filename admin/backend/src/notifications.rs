@@ -43,6 +43,11 @@ pub(crate) async fn route(state:&State,user:&Session,parts:&[&str],method:&Metho
             let token=body.get("bot_token").and_then(Value::as_str).unwrap_or("").trim();
             if !token.is_empty()&&!valid_token(token){return Err(invalid("notification_token_invalid"));}
             let mut tx=state.db.begin().await?;
+            let token_changed=!token.is_empty()||body["clear_token"]==true;
+            if token_changed {
+                crate::telegram_bot::lock_settings(&mut tx).await?;
+                crate::telegram_bot::reset(&mut tx).await?;
+            }
             sqlx::query("SELECT pg_advisory_xact_lock($1)").bind(DELIVERY_LOCK).execute(&mut *tx).await?;
             let current=sqlx::query("SELECT revision,token_cipher FROM notification_settings WHERE singleton FOR UPDATE").fetch_one(&mut *tx).await?;
             if current.get::<i64,_>("revision")!=revision{return Err(ApiError(StatusCode::CONFLICT,"notification_revision_conflict"));}

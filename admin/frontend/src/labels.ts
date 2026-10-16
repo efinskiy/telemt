@@ -27,6 +27,16 @@ export function stateLabel(value: string): string { return states[value] ?? valu
 export function number(value: unknown, digits = 1): string { return typeof value === 'number' && Number.isFinite(value) ? new Intl.NumberFormat('ru-RU', { maximumFractionDigits: digits }).format(value) : 'Нет данных'; }
 export function date(value: unknown): string { if (typeof value !== 'string' || !Number.isFinite(Date.parse(value))) return 'Нет данных'; return new Date(value).toLocaleString('ru-RU'); }
 const errors: Record<string, string> = {
+  telegram_bot_busy: 'Бот выполняет команду. Повторите сохранение через несколько секунд.',
+  telegram_bot_revision_conflict: 'Доступы изменены в другой вкладке. Откройте раздел заново.',
+  telegram_admin_disabled: 'Выберите действующую учётную запись администратора.',
+  telegram_webhook_active: 'У бота настроен webhook другого приложения. Освободите токен для Fleet или используйте другого бота.',
+  telegram_poll_conflict: 'Другой процесс получает команды этого бота. Остановите его или удалите прежний webhook.',
+  telegram_response_too_large: 'Ответ Telegram превышает допустимый размер.',
+  telegram_action_timeout: 'Обработка команды превысила время ожидания. Проверьте результат в истории операций.',
+  telegram_action_interrupted: 'Операция была прервана. Перед повтором проверьте результат в Fleet.',
+  telegram_profile_changed: 'Опубликованная версия профиля изменилась. Создайте подтверждение заново.',
+
   notification_chat_invalid: 'Укажите числовой chat ID или @имя публичного канала.',
   notification_token_invalid: 'Неверный формат токена бота.',
   notification_not_configured: 'Укажите получателя и токен бота.',

@@ -9,6 +9,7 @@ mod monitor;
 mod operations;
 mod probes;
 mod notifications;
+mod telegram_bot;
 mod routes;
 mod node_lifecycle;
 mod rotation;
@@ -76,11 +77,11 @@ async fn main()->anyhow::Result<()> {
     }
     operations::recover(&state).await?;
     let cancel=CancellationToken::new();let mut tasks=tokio::task::JoinSet::new();
-    for (name,period) in [("monitor",5),("operations",1),("probes",15),("dns",15),("rotation",5),("retention",60),("profiles",5),("certificates",60),("notifications",5)] {
+    for (name,period) in [("monitor",5),("operations",1),("probes",15),("dns",15),("rotation",5),("retention",60),("profiles",5),("certificates",60),("notifications",5),("telegram_bot",1)] {
         let state=state.clone();let cancel=cancel.clone();tasks.spawn(async move{
             let mut interval=tokio::time::interval(Duration::from_secs(period));interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
             loop{tokio::select!{_ = cancel.cancelled()=>break,_ = interval.tick()=>{}}
-                let result=match name{"notifications"=>notifications::tick(&state).await,"monitor"=>monitor::collect(&state).await,"operations"=>operations::tick(&state).await,"probes"=>probes::schedule(&state).await,"dns"=>dns::tick(&state).await,"rotation"=>rotation::tick(&state).await,"profiles"=>profiles::tick(&state).await,"certificates"=>certificates::tick(&state).await,_=>monitor::retention(&state).await};
+                let result=match name{"telegram_bot"=>telegram_bot::tick(&state).await,"notifications"=>notifications::tick(&state).await,"monitor"=>monitor::collect(&state).await,"operations"=>operations::tick(&state).await,"probes"=>probes::schedule(&state).await,"dns"=>dns::tick(&state).await,"rotation"=>rotation::tick(&state).await,"profiles"=>profiles::tick(&state).await,"certificates"=>certificates::tick(&state).await,_=>monitor::retention(&state).await};
                 if result.is_err(){tracing::warn!(component=name,"control task failed; retrying next bounded interval");}
             }
         });

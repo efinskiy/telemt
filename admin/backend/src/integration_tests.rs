@@ -13,6 +13,7 @@ mod dns_enrollment;
 mod forced_switch;
 mod managed_fixture;
 mod notifications;
+mod telegram_bot;
 
 #[derive(Clone)]struct Mock {config:Arc<std::sync::Mutex<Value>>,revision:Arc<std::sync::Mutex<String>>,records:Arc<std::sync::Mutex<HashMap<String,Value>>>,fail_patch:Arc<std::sync::atomic::AtomicBool>,stall_patch:Arc<std::sync::atomic::AtomicBool>,patch_started:Arc<tokio::sync::Notify>,user_ready:Arc<std::sync::atomic::AtomicBool>}
 async fn node(ExtractState(mock):ExtractState<Mock>,headers:HeaderMap,req:axum::extract::Request)->(StatusCode,Json<Value>) {
@@ -85,7 +86,8 @@ async fn postgres_router_auth_operations_probes_and_dns() {
     node_api_urls::run(&state,&app,&owner,&viewer,port).await;
     let secret="0123456789abcdef0123456789abcdef";
     let nodes=vec![Uuid::new_v4(),Uuid::new_v4()];
-    managed_fixture::seed(&state,&nodes,secret).await;
+    let profile=managed_fixture::seed(&state,&nodes,secret).await;
+    telegram_bot::run(&state,&app,&owner,&viewer,profile).await;
     let managed_agent=managed_fixture::start(state.clone(),app.clone(),port,nodes.clone());
     connection_maps::run(&state,&app,&owner,&viewer,nodes[0]).await;
     let cipher:String=sqlx::query_scalar("SELECT probe_cipher FROM nodes WHERE id=$1").bind(nodes[0]).fetch_one(&state.db).await.unwrap();assert!(!cipher.contains(secret));

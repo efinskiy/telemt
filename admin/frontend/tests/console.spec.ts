@@ -401,3 +401,34 @@ test('Telegram notification settings protect the token and show delivery history
   await fixture(page, 'viewer'); await page.reload();
   await expect(page.getByRole('navigation').getByRole('button', { name: 'Уведомления', exact: true })).toHaveCount(0);
 });
+
+test('Telegram management binds existing administrator rights without a second bot token', async ({ page }) => {
+  await fixture(page, 'owner');
+  const errors: string[] = []; page.on('pageerror', error => errors.push(error.message));
+  let settings = { revision: 1, enabled: false, token_configured: true, username: 'fixture_bot', last_poll_at: new Date().toISOString(), last_error: null, bindings: [] as { telegram_id: string; administrator_id: string }[] };
+  await page.route('**/api/administrators', route => route.fulfill({ json: { ok: true, data: [{ id: first, username: 'owner', role: 'owner', enabled: true }, { id: second, username: 'observer', role: 'viewer', enabled: true }] } }));
+  await page.route('**/api/telegram-bot', async route => {
+    if (route.request().method() === 'PUT') {
+      const body = route.request().postDataJSON();
+      expect(body).toEqual({ revision: 1, enabled: true, bindings: [{ telegram_id: '123456789', administrator_id: first }] });
+      expect(route.request().headers()['x-csrf-token']).toBe('fixture-csrf');
+      settings = { ...settings, ...body, revision: 2 };
+    }
+    await route.fulfill({ json: { ok: true, data: settings } });
+  });
+  await page.getByRole('navigation').getByRole('button', { name: 'Telegram-бот', exact: true }).click();
+  await page.getByRole('button', { name: 'Добавить доступ', exact: true }).click();
+  await page.getByLabel('Telegram ID 1', { exact: true }).fill('123456789');
+  await page.getByLabel('Администратор Fleet 1', { exact: true }).selectOption(first);
+  await page.getByLabel('Включить управление через Telegram').check();
+  await page.getByRole('button', { name: 'Сохранить', exact: true }).click();
+  await expect(page.getByRole('status')).toHaveText('Настройки Telegram-бота сохранены.');
+  await expect(page.getByText('Состояние: Принимает команды.', { exact: false })).toBeVisible();
+  await expect(page.locator('input[type=password]')).toHaveCount(0);
+  await page.setViewportSize({ width: 420, height: 900 });
+  await page.screenshot({ path: '/tmp/telemt-telegram-bot.png', fullPage: true });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  expect(errors).toEqual([]);
+  await fixture(page, 'viewer'); await page.reload();
+  await expect(page.getByRole('navigation').getByRole('button', { name: 'Telegram-бот', exact: true })).toHaveCount(0);
+});

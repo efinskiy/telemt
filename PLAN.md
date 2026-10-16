@@ -295,3 +295,16 @@ Verification: One Rust 1.88 PostgreSQL/router integration passed (6.85 seconds),
 - [x] Queue confirmed IP/server changes transactionally and deliver independently with bounded retries.
 - [x] Add System → Notifications settings, test delivery and compact history.
 - [x] Rust 1.88 cargo check passed; the focused PostgreSQL integration test passed (6.98s); one Playwright scenario passed (4.4s including frontend production build/type checking). Screenshot reviewed. Telegram and Cloudflare used local mocks; no production messages or DNS changes.
+
+## Telegram management bot (2026-10-16)
+
+- [x] Inspect official Bot API 10.3; share the encrypted notification token with an independent management switch.
+- [x] Add private-chat Telegram ID bindings to current Fleet administrators and durable, one-use confirmations.
+- [x] Reuse existing IP rotation, forced DNS switching and managed enrollment routes; fence reviewed profile revisions.
+- [x] Provide node/IP/DC/resource analytics and country shares including unknown/incomplete data.
+- [x] Use native rich messages, compact tables, styled action buttons, drafts, reply prompts and Compose delivery.
+- [x] Add owner settings UI, setup instructions and focused backend/browser validation only.
+
+Verification: Rust 1.88 backend compilation and one PostgreSQL/router integration passed (7.04 seconds), including actual bot polling against a local Telegram mock, owner/CSRF checks, role revocation, cancellation, Compose delivery, replay rejection and profile revision conflicts. One country-share unit test passed; one Chromium scenario passed (4.4 seconds including production frontend build/typecheck). Mobile screenshot inspected. Existing DNS/rotation integration assertions remain intact; no production Telegram messages or DNS writes, no broad test suite. Real Telegram rich-message rendering still requires verification with the configured bot after deployment.
+
+Final verification: The final backend integration passed again (7.02 seconds). An intermediate rerun exposed the pre-existing fixture race between connection_maps disabling a node and managed_fixture checking an unauthorized agent poll; its existing assertions were left unchanged. Final frontend build/typecheck and git diff --check passed. Backend dev binary also built successfully. Temporary PostgreSQL was stopped after validation.

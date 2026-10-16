@@ -3,13 +3,14 @@ import { createRoot } from 'react-dom/client';
 import { api, setCsrf, type User, type Node, type Operation, type Group, isStale } from './api';
 import { Overview, Nodes, Users, Configuration, Shaping, Diagnostics } from './node-pages';
 import { Operations, Failover, Probes, Administrators, Audit, NoNode } from './fleet-pages';
+import { TelegramBot } from './telegram-bot-page';
 import { Notifications } from './notifications-page';
 import { IPRotation } from './rotation-page';
 import './styles.css';
 import { Profiles, Certificates } from './managed-pages';
 import { Brand, Icon, Navigation, ThemeControl, pageIcon, pageContext, useAppearance } from './interface';
 
-const pages = ['Обзор', 'Серверы', 'Общие профили', 'Сертификаты', 'Пользователи', 'Конфигурация', 'Шейпер', 'Диагностика', 'Внешние проверки', 'Переключение DNS', 'Ротация IP', 'Операции', 'Аудит', 'Уведомления', 'Администраторы'];
+const pages = ['Обзор', 'Серверы', 'Общие профили', 'Сертификаты', 'Пользователи', 'Конфигурация', 'Шейпер', 'Диагностика', 'Внешние проверки', 'Переключение DNS', 'Ротация IP', 'Операции', 'Аудит', 'Уведомления', 'Telegram-бот', 'Администраторы'];
 function App() {
   const appearance = useAppearance();
   const [user, setUser] = useState<User | null>(null); const [checked, setChecked] = useState(false); const [error, setError] = useState(''); const [busy, setBusy] = useState(false);
@@ -35,6 +36,7 @@ function App() {
     {node && page === 'Диагностика' && <Diagnostics key={node.id} nodeId={node.id} canWrite={canWrite} run={run} />}
     {page === 'Общие профили' && <Profiles user={user} groups={groups} nodes={nodes} run={run} />}{page === 'Сертификаты' && <Certificates user={user} run={run} />}
     {page === 'Внешние проверки' && <Probes user={user} run={run} nodes={nodes} />}{page === 'Переключение DNS' && <Failover nodes={nodes} groups={groups} user={user} run={run} refresh={() => run(refresh)} />}
+    {page === 'Telegram-бот' && user.role === 'owner' && <TelegramBot openNotifications={() => setPage('Уведомления')} />}
     {page === 'Уведомления' && user.role === 'owner' && <Notifications />}
     {page === 'Ротация IP' && <IPRotation nodes={nodes} groups={groups} user={user} run={run} />}
     {page === 'Операции' && <Operations rows={operations} run={run} refresh={() => run(refresh)} />}{page === 'Аудит' && <Audit run={run} />}{page === 'Администраторы' && user.role === 'owner' && <Administrators run={run} />}

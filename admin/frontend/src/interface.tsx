@@ -34,7 +34,7 @@ export function Icon({ name, className = '' }: { name: string; className?: strin
   return <svg className={`icon ${className}`} width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d={paths[name] ?? paths.activity} /></svg>;
 }
 export function Brand() { return <div className="brand"><span className="brand-symbol" aria-hidden="true"><Icon name="shaping" /></span><div className="brand-name">telemt<span>Fleet</span></div></div>; }
-const icons: Record<string, string> = { 'Обзор': 'overview', 'Серверы': 'server', 'Общие профили': 'profiles', 'Сертификаты': 'certificate', 'Пользователи': 'users', 'Конфигурация': 'settings', 'Шейпер': 'shaping', 'Диагностика': 'activity', 'Внешние проверки': 'globe', 'Переключение DNS': 'dns', 'Ротация IP': 'rotate', 'Операции': 'operations', 'Аудит': 'audit', 'Уведомления': 'bell', 'Администраторы': 'shield' };
+const icons: Record<string, string> = { 'Обзор': 'overview', 'Серверы': 'server', 'Общие профили': 'profiles', 'Сертификаты': 'certificate', 'Пользователи': 'users', 'Конфигурация': 'settings', 'Шейпер': 'shaping', 'Диагностика': 'activity', 'Внешние проверки': 'globe', 'Переключение DNS': 'dns', 'Ротация IP': 'rotate', 'Операции': 'operations', 'Аудит': 'audit', 'Telegram-бот': 'users', 'Уведомления': 'bell', 'Администраторы': 'shield' };
 export const pageIcon = (page: string) => icons[page] ?? 'overview';
 const navigationGroups = [
   { title: 'Панель управления', pages: ['Обзор'] },
@@ -42,7 +42,7 @@ const navigationGroups = [
   { title: 'Трафик и доступ', pages: ['Пользователи', 'Конфигурация', 'Шейпер'] },
   { title: 'Наблюдение', pages: ['Диагностика', 'Внешние проверки'] },
   { title: 'Отказоустойчивость', pages: ['Переключение DNS', 'Ротация IP'] },
-  { title: 'Система', pages: ['Операции', 'Аудит', 'Уведомления', 'Администраторы'] },
+  { title: 'Система', pages: ['Операции', 'Аудит', 'Уведомления', 'Telegram-бот', 'Администраторы'] },
 ];
 const descriptions: Record<string, string> = {
   'Обзор': 'Состояние инфраструктуры, нагрузка и подключения в одном месте.',
@@ -58,6 +58,7 @@ const descriptions: Record<string, string> = {
   'Ротация IP': 'Пулы адресов нод и правила автоматической смены IP.',
   'Операции': 'Ход выполнения изменений и результаты по каждому серверу.',
   'Аудит': 'История действий администраторов и изменений в кабинете.',
+  'Telegram-бот': 'Аналитика и управление инфраструктурой из личного чата Telegram.',
   'Уведомления': 'Доставка событий ротации IP и смены сервера в Telegram.',
   'Администраторы': 'Учётные записи, роли и доступ к управлению Fleet.',
 };
@@ -86,7 +87,7 @@ export function ThemeControl({ theme, change }: { theme: Theme; change: (theme: 
 }
 export function Navigation({ pages, page, select, user, collapsed, toggle, logout }: { pages: string[]; page: string; select: (page: string) => void; user: User; collapsed: boolean; toggle: () => void; logout: () => void }) {
   const [more, setMore] = useState(false);
-  const visible = pages.filter(item => !['Администраторы', 'Уведомления'].includes(item) || user.role === 'owner');
+  const visible = pages.filter(item => !['Администраторы', 'Уведомления', 'Telegram-бот'].includes(item) || user.role === 'owner');
   const quick = ['Обзор', 'Серверы', 'Пользователи', 'Шейпер'];
   const go = (item: string) => { select(item); setMore(false); };
   const item = (name: string) => <button key={name} title={name} aria-label={name} aria-current={page === name ? 'page' : undefined} className={page === name ? 'nav-active' : ''} onClick={() => go(name)}><Icon name={pageIcon(name)} /><span>{name}</span></button>;

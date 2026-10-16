@@ -320,3 +320,7 @@ footer b { font-weight: 400; opacity: .6; margin-left: 4px; }
 .notification-page .form-grid > label { display: flex; flex-direction: column; align-items: stretch; gap: 8px; }
 .notification-page td { vertical-align: top; }
 .notification-page details { max-width: 480px; overflow-wrap: anywhere; }
+
+.telegram-access-row { display: grid; grid-template-columns: minmax(140px,1fr) minmax(180px,2fr) auto; align-items: end; gap: 12px; }
+.notification-page .telegram-access-row label { display: flex; flex-direction: column; align-items: stretch; gap: 8px; }
+@media(max-width: 760px) { .telegram-access-row { grid-template-columns: 1fr; } }

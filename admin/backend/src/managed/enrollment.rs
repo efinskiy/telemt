@@ -4,6 +4,7 @@ use serde_json::{Value,json};
 use sqlx::Row;
 use uuid::Uuid;
 
+/// Apply owner-only managed enrollment and deployment actions through the existing coordinator.
 pub(crate) async fn route(state:&State,user:&Session,parts:&[&str],method:&Method,body:Value)->Result<Json<Value>>{
     user.require("owner")?;
     match parts{
@@ -17,6 +18,10 @@ pub(crate) async fn route(state:&State,user:&Session,parts:&[&str],method:&Metho
             let mut tx=state.db.begin().await?;
             sqlx::query("SELECT pg_advisory_xact_lock($1)").bind(crate::state::DNS_COORDINATOR_LOCK).execute(&mut *tx).await?;
             let p=sqlx::query("SELECT domain,probe_cipher,published_revision FROM profiles WHERE id=$1 FOR UPDATE").bind(profile).fetch_one(&mut *tx).await?;
+            // Telegram confirmation must enroll the profile revision that the owner reviewed.
+            if let Some(expected)=body.get("expected_profile_revision") {
+                if expected.as_i64()!=Some(p.get::<i64,_>("published_revision")){return Err(ApiError(StatusCode::CONFLICT,"telegram_profile_changed"));}
+            }
             if p.get::<i64,_>("published_revision")==0{return Err(ApiError(StatusCode::CONFLICT,"publish_profile_first"));}
             let token=format!("Bearer {}",crypto::random());let probe=state.vault.open(&p.get::<String,_>("probe_cipher"),&format!("profile-probe:{profile}"))?;
             let document=json!({"ipv4":if ip.is_ipv4(){Some(ip.to_string())}else{None},"ipv6":if ip.is_ipv6(){Some(ip.to_string())}else{None},"port":8443,"sni":p.get::<String,_>("domain"),"probe_dc":2,"managed":true,"profile_id":profile});

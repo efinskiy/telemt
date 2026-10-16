@@ -397,3 +397,49 @@ Attribution: [IP Geolocation by DB-IP](https://db-ip.com), licensed under
 [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). Geometry comes from
 [Natural Earth](https://www.naturalearthdata.com/about/terms-of-use/) (public domain).
 See `admin/frontend/MAP-NOTICES.md` for source provenance.
+
+## Telegram management bot
+
+The admin service includes a private-chat management worker. It uses the encrypted
+bot token from **System → Notifications**; notification delivery and management
+have separate enable switches. No additional container, webhook, or public port
+is required. The worker uses current [Bot API 10.3](https://core.telegram.org/bots/api)
+rich messages, compact tables, styled buttons, progress drafts and reply prompts.
+Use a current Telegram client and the official Bot API endpoint.
+
+In **System → Telegram bot**, bind each numeric Telegram user ID to an enabled
+Fleet administrator and enable management. Notification recipients do not receive
+management access automatically. `/id` returns the sender's ID; `/start` opens the
+menu. Owners can change DNS, toggle automation and enroll nodes. Other roles can
+read analytics. Administrator permissions are checked for every command and again
+before a mutation. Only private chats are accepted. Do not attach a webhook or
+another update consumer to this bot; Fleet reports a conflict instead of removing
+an existing webhook. Saving access settings or replacing the shared token
+invalidates pending confirmations and discards updates queued before activation.
+
+Commands: `/status`, `/nodes`, `/groups`, `/operations`, `/add`, `/cancel`, `/id`.
+The menus include IP pool rotation, forced server switching and automation toggles.
+DNS operations reuse the cabinet's preview, conflict, coordinator and audit rules;
+forced server selection bypasses runtime readiness and automatic failover gates
+just as it does in the cabinet. Confirmations are sender-bound, expire after five
+minutes and cannot execute twice. Interrupted operations are marked unknown for
+inspection rather than blindly retried. IP rotation remains asynchronous; inspect
+its status in **My operations** or wait for a confirmed-DNS notification.
+
+Node analytics show connected IPs, connections, traffic, CPU/RAM, Telegram DC
+availability and separate WEB/MTProxy health. Stale data is reported as unknown.
+Country percentages use unique IPs within the selected node, include unknown and
+truncated entries in the denominator, and require the existing local GeoIP database.
+They do not represent distinct people behind NAT or global deduplication across nodes.
+
+Enrollment asks for a published profile, name and interface IP, then returns a
+`docker-compose.yml` document. Its one-use enrollment token lasts 24 hours. Save the
+file on the new node and run `docker compose up -d`. `MANAGED_NODE_IMAGE` must already
+be configured with the managed image digest. If the profile changes before
+confirmation, restart the wizard. Compose can be downloaded again by the same
+administrator for 24 hours; the stored copy is encrypted and never included in
+audit records. If delivery fails, use **My operations**. Renew enrollment only for
+an unregistered node, since renewal invalidates the previous enrollment token.
+
+Migration `008_telegram_management_bot.sql` runs at admin startup. Management is
+disabled by default. Disabling management does not stop notification delivery.
