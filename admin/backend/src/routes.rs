@@ -18,7 +18,7 @@ pub(crate) async fn dispatch(ExtractState(state):ExtractState<State>,Path(path):
     match parts.as_slice() {
         ["profiles",..]=>crate::profiles::route(&state,&user,&parts,&method,&headers,body).await,
         ["certificates",..]=>crate::certificates::route(&state,&user,&parts,&method,body).await,
-        ["managed-nodes"] | ["nodes",_,"enrollment"|"managed"|"revoke"|"redeploy"]=>crate::managed::route(&state,&user,&parts,&method,body).await,
+        ["managed-nodes"] | ["nodes",_,"enrollment"|"managed"|"revoke"|"redeploy"|"addresses"]=>crate::managed::route(&state,&user,&parts,&method,body).await,
         ["nodes"] if method==Method::GET => {
             let rows=sqlx::query("SELECT id,name,document,snapshot,collected_at,enabled FROM nodes ORDER BY name LIMIT 20").fetch_all(&state.db).await?;
             let data:Vec<_>=rows.into_iter().map(|r|json!({"id":r.get::<Uuid,_>("id"),"name":r.get::<String,_>("name"),"document":r.get::<Value,_>("document"),"snapshot":redact(r.get("snapshot")),"collected_at":r.get::<Option<chrono::DateTime<chrono::Utc>>,_>("collected_at"),"enabled":r.get::<bool,_>("enabled")})).collect(); Ok(Json(ok(json!(data))))

@@ -297,14 +297,14 @@ test('sustained IP policy exposes separate idle caps and recovery state', async 
 test('forced server switch previews DNS, fences stale confirmation and respects owner role', async ({ page }, testInfo) => {
   await fixture(page, 'owner');
   let group = { id: 'forced-group', name: 'Proxy group', active_node: first, automatic: true, status: 'healthy', document: { node_ids: [first, second] }, observed: { A: { content: '192.0.2.1' } } };
-  const preview = { old_node: first, node_id: second, observed: group.observed, intent: { A: { content: '192.0.2.2', ttl: 60, proxied: false } }, deployment: 7 };
+  let preview = { old_node: first, node_id: second, observed: group.observed, intent: { A: { content: '192.0.2.2', ttl: 60, proxied: false } } };
   let attempts = 0;
   await page.route('**/api/groups', route => route.fulfill({ json: { ok: true, data: [group] } }));
   await page.route('**/api/groups/forced-group/force-preview', route => route.fulfill({ json: { ok: true, data: preview } }));
   await page.route('**/api/groups/forced-group/force-switch', route => {
     expect(route.request().postDataJSON()).toEqual({ node_id: second, preview }); attempts++;
     if (attempts === 1) return route.fulfill({ status: 409, json: { ok: false, error: { code: 'dns_preview_changed' } } });
-    group = { ...group, active_node: second, automatic: false, observed: { A: { content: '192.0.2.2' } } };
+    group = { ...group, active_node: second, automatic: false, observed: { A: { content: preview.intent.A.content } } };
     return route.fulfill({ json: { ok: true, data: {} } });
   });
   await page.getByRole('button', { name: 'Обновить', exact: true }).click();
@@ -329,6 +329,31 @@ test('forced server switch previews DNS, fences stale confirmation and respects 
   await expect(page.getByRole('row').filter({ hasText: 'Proxy group' })).toContainText('Reserve');
   expect(attempts).toBe(2);
   await page.setViewportSize({ width: 1280, height: 900 });
+  const edited = [first, second].map((id, index) => ({ id, name: index ? 'Reserve' : 'Primary', document: { managed: true, ipv4: `192.0.2.${index + 1}`, ipv6: null }, snapshot: {}, collected_at: null, enabled: true }));
+  await page.route('**/api/nodes', route => route.fulfill({ json: { ok: true, data: edited } }));
+  await page.route(`**/api/nodes/${second}/addresses`, route => {
+    expect(route.request().postDataJSON()).toEqual({ ipv4: '192.0.2.20', ipv6: null, expected_addresses: { ipv4: '192.0.2.2', ipv6: null } });
+    edited[1].document.ipv4 = '192.0.2.20'; edited[1].enabled = false;
+    return route.fulfill({ json: { ok: true, data: { addresses: { ipv4: '192.0.2.20', ipv6: null }, deployment: 8 } } });
+  });
+  await page.getByRole('button', { name: 'Обновить', exact: true }).click();
+  await page.getByRole('navigation').getByRole('button', { name: 'Серверы', exact: true }).click();
+  await page.getByRole('article', { name: 'Сервер Reserve', exact: true }).getByRole('button', { name: 'Управление', exact: true }).click();
+  await dialog.getByLabel('IPv4 сервера').fill('192.0.2.20');
+  await dialog.getByRole('button', { name: 'Сохранить IP и применить на ноде' }).click();
+  await expect(dialog.getByRole('status')).toContainText('DNS не изменён');
+  await page.screenshot({ path: testInfo.outputPath('node-addresses.png'), fullPage: true });
+  await dialog.getByRole('button', { name: 'Закрыть окно', exact: true }).click();
+  preview = { ...preview, old_node: second, observed: group.observed, intent: { A: { content: '192.0.2.20', ttl: 60, proxied: false } } };
+  await page.getByRole('navigation').getByRole('button', { name: 'Переключение DNS', exact: true }).click();
+  await page.getByRole('button', { name: 'Сменить активный сервер', exact: true }).click();
+  await dialog.getByLabel('Новый активный сервер').selectOption(second);
+  await expect(dialog.getByText('Принудительный выбор не зависит', { exact: false })).toBeVisible();
+  await dialog.getByRole('button', { name: 'Проверить и показать DNS' }).click();
+  await expect(dialog.getByRole('cell', { name: '192.0.2.20', exact: true })).toBeVisible();
+  await dialog.getByRole('button', { name: 'Подтвердить переключение' }).click();
+  await expect(dialog).toHaveCount(0);
+  expect(attempts).toBe(3);
   await fixture(page, 'viewer');
   await page.route('**/api/groups', route => route.fulfill({ json: { ok: true, data: [group] } }));
   await page.getByRole('button', { name: 'Обновить', exact: true }).click();

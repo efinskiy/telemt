@@ -24,9 +24,10 @@ pub(super) async fn run(state:&State,app:&Router,mock:&Mock,nodes:&[Uuid],owner:
     assert_eq!(body["preview"]["intent"]["A"]["content"],"192.0.2.2");assert_eq!(body["preview"]["intent"]["AAAA"]["content"],"2001:db8::2");
     let mut stale=body.clone();stale["preview"]["deployment"]=json!(-1);
     assert_eq!(request(app,&switch_url,"POST",stale,Some(owner),true).await.0,StatusCode::CONFLICT);
-    sqlx::query("UPDATE nodes SET enabled=false WHERE id=$1").bind(nodes[1]).execute(&state.db).await.unwrap();
-    assert_eq!(request(app,&switch_url,"POST",body.clone(),Some(owner),true).await.0,StatusCode::CONFLICT);
-    sqlx::query("UPDATE nodes SET enabled=true WHERE id=$1").bind(nodes[1]).execute(&state.db).await.unwrap();
+    // Force ignores changes in runtime synchronization after the owner previews the DNS intent.
+    sqlx::query("UPDATE nodes SET enabled=false,collected_at=NULL,snapshot='{}'").execute(&state.db).await.unwrap();
+    sqlx::query("UPDATE managed_nodes SET status='pending',last_seen=NULL").execute(&state.db).await.unwrap();
+    sqlx::query("UPDATE failover_groups SET document=jsonb_set(document,'{configuration_verified}','false') WHERE id=$1").bind(group).execute(&state.db).await.unwrap();
     let pending=Uuid::new_v4();
     sqlx::query("INSERT INTO dns_changes(id,group_id,new_node,intent,state) VALUES($1,$2,$3,'{}','unknown')").bind(pending).bind(group).bind(nodes[1]).execute(&state.db).await.unwrap();
     assert_eq!(request(app,&switch_url,"POST",body.clone(),Some(owner),true).await.0,StatusCode::CONFLICT);
@@ -42,6 +43,26 @@ pub(super) async fn run(state:&State,app:&Router,mock:&Mock,nodes:&[Uuid],owner:
     assert_eq!(mock.records.lock().unwrap()[&"a".repeat(32)]["content"],"192.0.2.2");assert_eq!(mock.records.lock().unwrap()[&"b".repeat(32)]["content"],"2001:db8::2");
     assert_eq!(sqlx::query_scalar::<_,i64>("SELECT count(*) FROM audit WHERE action='dns.force_submit'").fetch_one(&state.db).await.unwrap(),1);
     assert_eq!(request(app,&switch_url,"POST",body,Some(owner),true).await.0,StatusCode::CONFLICT);
+    // Replace an offline pool member without touching DNS, credentials or its shared profile.
+    let url=format!("/api/nodes/{}/addresses",nodes[0]);
+    let edit=json!({"ipv4":"192.0.2.10","ipv6":"2001:db8::1","expected_addresses":{"ipv4":"192.0.2.1","ipv6":"2001:db8::1"}});
+    assert_eq!(request(app,&url,"PATCH",edit.clone(),Some(viewer),true).await.0,StatusCode::FORBIDDEN);
+    let (status,response,_)=request(app,&url,"PATCH",edit.clone(),Some(owner),true).await;assert_eq!(status,StatusCode::OK,"{response}");
+    assert_eq!(request(app,&url,"PATCH",edit,Some(owner),true).await.0,StatusCode::CONFLICT);
+    let ips:Value=sqlx::query_scalar("SELECT addresses FROM ip_pools WHERE id=$1").bind(pool).fetch_one(&state.db).await.unwrap();
+    assert!(ips.as_array().unwrap().contains(&json!("192.0.2.10")));assert!(!ips.as_array().unwrap().contains(&json!("192.0.2.1")));
+    let did=response["data"]["deployment"].as_i64().unwrap();
+    let cipher:String=sqlx::query_scalar("SELECT bundle_cipher FROM deployments WHERE id=$1").bind(did).fetch_one(&state.db).await.unwrap();
+    let raw=state.vault.open(&cipher,&format!("deployment:{}:{did}",nodes[0])).unwrap();let bundle:telemt_managed::Bundle=serde_json::from_str(&raw).unwrap();
+    assert_eq!(bundle.public_ip,"192.0.2.10");assert!(bundle.nginx.contains("192.0.2.10:443"));assert!(!bundle.public_ips.contains(&"192.0.2.1".into()));
+    assert_eq!(mock.records.lock().unwrap()[&"a".repeat(32)]["content"],"192.0.2.2");
+    let edit=json!({"ipv4":"192.0.2.20","ipv6":"2001:db8::2","expected_addresses":{"ipv4":"192.0.2.2","ipv6":"2001:db8::2"}});
+    assert_eq!(request(app,&format!("/api/nodes/{}/addresses",nodes[1]),"PATCH",edit,Some(owner),true).await.0,StatusCode::OK);
+    let (status,response,_)=request(app,&preview_url,"POST",target,Some(owner),true).await;assert_eq!(status,StatusCode::OK,"{response}");
+    assert_eq!(request(app,&switch_url,"POST",json!({"node_id":nodes[1],"preview":response["data"]}),Some(owner),true).await.0,StatusCode::OK);
+    assert_eq!(mock.records.lock().unwrap()[&"a".repeat(32)]["content"],"192.0.2.20");
+    for (index,node) in nodes.iter().enumerate(){sqlx::query("UPDATE nodes SET document=jsonb_set(document,'{ipv4}',$2),enabled=true WHERE id=$1").bind(node).bind(json!(format!("192.0.2.{}",index+1))).execute(&state.db).await.unwrap();}
+    sqlx::query("UPDATE managed_nodes SET desired_revision=applied_revision,status='applied',last_seen=now()").execute(&state.db).await.unwrap();
     sqlx::query("DELETE FROM ip_pools WHERE id=$1").bind(pool).execute(&state.db).await.unwrap();
     sqlx::query("UPDATE profiles SET group_id=NULL WHERE group_id=$1").bind(group).execute(&state.db).await.unwrap();
     assert_eq!(request(app,&format!("/api/groups/{group}"),"DELETE",json!({}),Some(owner),true).await.0,StatusCode::OK);

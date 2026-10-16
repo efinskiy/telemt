@@ -7,6 +7,7 @@ use uuid::Uuid;
 pub(crate) async fn route(state:&State,user:&Session,parts:&[&str],method:&Method,body:Value)->Result<Json<Value>>{
     user.require("owner")?;
     match parts{
+        ["nodes",id,"addresses"] if *method==Method::PATCH=>super::addresses::update(state,user,parse_id(id)?,&body).await,
         ["managed-nodes"] if *method==Method::POST=>{
             let name=crate::state::bounded_name(&body,"name")?;let profile=parse_id(field(&body,"profile_id")?)?;
             let ip:std::net::IpAddr=field(&body,"ip")?.parse().map_err(|_|bad())?;

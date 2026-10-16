@@ -28,19 +28,19 @@ pub(super) async fn eligible(state:&State,group:&sqlx::postgres::PgRow,target:Uu
     eligible_mode(state,group,target,false).await
 }
 
-/// Forced selection retains node admission while using its configured address without probe evidence.
+/// Forced selection uses registered addresses; ordinary switches retain runtime admission checks.
 pub(super) async fn eligible_mode(state:&State,group:&sqlx::postgres::PgRow,target:Uuid,forced:bool)->Result<Value> {
-    if !crate::managed::admission::ready(state,target).await? {return Err(ApiError(StatusCode::CONFLICT,"managed_node_not_ready"));}
+    if !forced && !crate::managed::admission::ready(state,target).await? {return Err(ApiError(StatusCode::CONFLICT,"managed_node_not_ready"));}
     crate::rotation::selection::same_profile(state,group,target).await?;
     let document:Value=group.get("document");let nodes=document["node_ids"].as_array().ok_or_else(bad)?;
     if !nodes.iter().any(|id|id.as_str()==Some(target.to_string().as_str())){return Err(bad());}
     let candidate=node(state,target).await?;
     let candidate_doc:Value=candidate.get("document");let snapshot:Value=candidate.get("snapshot");
-    if candidate_doc["port"]!=document["port"]||candidate_doc["sni"]!=document["sni"]
+    if !forced && (candidate_doc["port"]!=document["port"]||candidate_doc["sni"]!=document["sni"]
         || !fresh(candidate.get("collected_at"),15)||snapshot["ready"]!=true||!candidate.get::<bool,_>("enabled")
         || document["fingerprint"].as_str().is_none()
-        || snapshot["compatibility"]["fingerprint"]!=document["fingerprint"] {
-        return Err(ApiError(axum::http::StatusCode::CONFLICT,"incompatible_or_unready_reserve"));
+        || snapshot["compatibility"]["fingerprint"]!=document["fingerprint"]) {
+        return Err(ApiError(StatusCode::CONFLICT,"incompatible_or_unready_reserve"));
     }
     let mut intent=json!({});
     for (key,family,version) in [("record_a_id","A",4),("record_aaaa_id","AAAA",6)] {
@@ -106,7 +106,7 @@ async fn write_owned(state:&State,id:Uuid,target:Uuid,actor:Option<Uuid>,rotatio
         sqlx::query("UPDATE failover_groups SET automatic=false WHERE id=$1").bind(id).execute(&mut *intent_tx).await?;
         sqlx::query("UPDATE profiles SET resume_automatic=false WHERE group_id=$1").bind(id).execute(&mut *intent_tx).await?;
         sqlx::query("UPDATE ip_pools SET automatic=false,updated_at=now() WHERE group_id=$1").bind(id).execute(&mut *intent_tx).await?;
-        sqlx::query("INSERT INTO audit(actor,action,target,outcome) VALUES($1,'dns.force_submit',$2,$3)").bind(actor).bind(change.to_string()).bind(json!({"group":id,"old_node":old,"new_node":target,"intent":intent,"probe_quorum_bypassed":true,"cooldown_bypassed":true,"local_exhaustion_bypassed":true,"automation_paused":true})).execute(&mut *intent_tx).await?;
+        sqlx::query("INSERT INTO audit(actor,action,target,outcome) VALUES($1,'dns.force_submit',$2,$3)").bind(actor).bind(change.to_string()).bind(json!({"group":id,"old_node":old,"new_node":target,"intent":intent,"runtime_readiness_bypassed":true,"synchronization_bypassed":true,"probe_quorum_bypassed":true,"cooldown_bypassed":true,"local_exhaustion_bypassed":true,"automation_paused":true})).execute(&mut *intent_tx).await?;
     }
     if let Some((rotation,_))=rotation {
         sqlx::query("UPDATE ip_rotations SET state='dns_pending',dns_change=$2,updated_at=now() WHERE id=$1 AND state='queued'").bind(rotation).bind(change).execute(&mut *intent_tx).await?;

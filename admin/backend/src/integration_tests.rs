@@ -163,7 +163,10 @@ async fn postgres_router_auth_operations_probes_and_dns() {
     assert_eq!(request(&app,&format!("/api/groups/{group}/verify-configuration"),"POST",json!({}),Some(&owner),true).await.0,StatusCode::OK);
     assert_eq!(request(&app,&format!("/api/groups/{group}"),"DELETE",json!({}),Some(&owner),true).await.0,StatusCode::OK);
     assert_eq!(mock.records.lock().unwrap()["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"]["content"],"192.0.2.99");
+    // Exercise forced recovery with agents genuinely offline, then resume command processing.
+    managed_agent.abort();let _=managed_agent.await;
     forced_switch::run(&state,&app,&mock,&nodes,&owner,&viewer).await;
+    let managed_agent=managed_fixture::start(state.clone(),app.clone(),port,nodes.clone());
     rotation_cases::run(&state,&app,&mock,&nodes,&owner,&viewer,&agents).await;
     let (_,session,_)=request(&app,"/api/session","GET",json!({}),Some(&owner),false).await;assert_eq!(session["data"]["csrf"],owner.1);
     assert_eq!(request(&app,"/api/logout","POST",json!({}),Some(&owner),true).await.0,StatusCode::OK);

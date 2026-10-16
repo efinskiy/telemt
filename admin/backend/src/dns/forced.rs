@@ -1,4 +1,4 @@
-//! Manual server selection bypasses health policy, never readiness or DNS write fencing.
+//! Owner-forced server selection bypasses runtime state while retaining DNS write fencing.
 use super::*;
 
 /// Owner-only requests serialize with automatic DNS and local IP rotation.
@@ -22,17 +22,16 @@ pub(super) async fn route(state:&State,user:&Session,id:Uuid,action:&str,body:&V
 /// The coordinator lock must be held through preview comparison and intent persistence.
 pub(super) async fn preview(state:&State,group:&sqlx::postgres::PgRow,target:Uuid)->Result<Value> {
     let id:Uuid=group.get("id");let active:Option<Uuid>=group.get("active_node");
-    if active==Some(target){return Err(ApiError(StatusCode::CONFLICT,"dns_target_already_active"));}
     provider::guard_pool(state,id).await?;
     let pending:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM dns_changes WHERE group_id=$1 AND state IN ('writing','unknown'))").bind(id).fetch_one(&state.db).await?;
     if pending{return Err(ApiError(StatusCode::CONFLICT,"dns_outcome_unknown"));}
     let document:Value=group.get("document");
-    if document["configuration_verified"]!=true{return Err(ApiError(StatusCode::CONFLICT,"incompatible_or_unready_reserve"));}
     let intent=provider::eligible_mode(state,group,target,true).await?;
-    let revision:i64=sqlx::query_scalar("SELECT desired_revision FROM managed_nodes WHERE node_id=$1").bind(target).fetch_one(&state.db).await?;
+    if active==Some(target)&&provider::matches_intent(&group.get::<Value,_>("observed"),&intent){return Err(ApiError(StatusCode::CONFLICT,"dns_target_already_active"));}
     let token=state.vault.open(&group.get::<String,_>("token_cipher"),&format!("dns:{id}"))?;
     let observed=provider::read_records(state,&document,&token).await?;
     if observed!=group.get::<Value,_>("observed"){return Err(ApiError(StatusCode::CONFLICT,"external_dns_conflict"));}
-    // Bind confirmation to configuration and deployment, not the constantly refreshed monitoring timestamp.
-    Ok(json!({"group_id":id,"old_node":active,"node_id":target,"intent":intent,"observed":observed,"configuration":document,"deployment":revision}))
+    // Synchronization can progress independently; confirmation binds only DNS ownership and addresses.
+    let configuration=json!({"domain":document["domain"],"zone_id":document["zone_id"],"record_a_id":document["record_a_id"],"record_aaaa_id":document["record_aaaa_id"],"node_ids":document["node_ids"],"profile_id":document["profile_id"]});
+    Ok(json!({"group_id":id,"old_node":active,"node_id":target,"intent":intent,"observed":observed,"configuration":configuration}))
 }

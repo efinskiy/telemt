@@ -264,3 +264,11 @@ Verification: frontend production build/typecheck and one focused Chromium scena
 - [x] Verify backend and one focused frontend scenario; leave production DNS untouched.
 
 Verification: Rust 1.88 backend check passed. One PostgreSQL/router integration test passed (7 seconds), extended with forced A/AAAA switching without probe evidence during cooldown, unchanged preview/readiness/unknown-write/external-conflict gates, owner/CSRF restrictions, and atomic group/profile/IP-pool automation pause. Frontend production build/typecheck and one Chromium scenario passed (3.2 seconds including build), covering stale preview rejection, confirmation, owner visibility and desktop/mobile layout; screenshots inspected. Initial scenario retries corrected fixture cleanup and mobile navigation only. No full suite, production DNS write, deployment, commit or push was performed.
+
+## Managed-node address replacement and offline DNS recovery
+
+- [x] Add owner-only IPv4/IPv6 editing with stale-editor protection, atomic pool replacement and queued deployment for offline nodes; preserve DNS and shared credentials.
+- [x] Make owner-forced switching independent of runtime synchronization/readiness, as explicitly requested; preserve DNS fences and allow DNS refresh for a readdressed active node.
+- [x] Add the address editor and run only the relevant backend integration and frontend browser/build checks.
+
+Verification: One PostgreSQL/router integration passed (7.21 seconds), covering offline/disabled/pending nodes, stale previews, address replacement, deployment rendering and same-node DNS refresh. Frontend production build/typecheck and one Chromium scenario passed (4.9 seconds including build); address editor and mobile switch screenshots inspected. Fixture agents were stopped during the offline scenario and resumed afterward; no existing assertions were weakened. This request explicitly supersedes the earlier forced-switch runtime readiness requirement. Automatic switching retains its existing checks. The temporary PostgreSQL instance was stopped. No production DNS changes, deployment, commit or push.

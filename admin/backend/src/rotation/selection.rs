@@ -35,11 +35,11 @@ pub(crate) async fn candidate(state:&State,node_id:Uuid,ipv4:bool)->Result<Strin
     Err(conflict("reserve_without_probe_quorum"))
 }
 
-/// Manual server selection uses its configured address without inferring external reachability.
+/// Owner-forced DNS uses registered addresses even while the node is offline or unsynchronized.
 pub(crate) async fn configured(state:&State,node_id:Uuid,ipv4:bool)->Result<String> {
-    if let Some(pool)=sqlx::query("SELECT * FROM ip_pools WHERE node_id=$1").bind(node_id).fetch_optional(&state.db).await? {workflow::ready(state,&pool).await?;}
     let doc:Value=node(state,node_id).await?.get("document");
     let ip=doc[if ipv4{"ipv4"}else{"ipv6"}].as_str().ok_or(conflict("reserve_ip_not_prepared"))?;
-    if !ip.parse::<std::net::IpAddr>().is_ok_and(|address|address.is_ipv4()==ipv4){return Err(conflict("reserve_ip_not_prepared"));}
+    let address:std::net::IpAddr=ip.parse().map_err(|_|conflict("node_address_invalid"))?;
+    if address.is_ipv4()!=ipv4||address.is_unspecified()||address.is_multicast()||address.is_loopback()||matches!(address,std::net::IpAddr::V6(ip) if ip.to_ipv4_mapped().is_some()){return Err(conflict("node_address_invalid"));}
     Ok(ip.to_owned())
 }
