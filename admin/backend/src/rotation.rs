@@ -17,7 +17,7 @@ pub(crate) async fn route(state:&State,user:&Session,parts:&[&str],method:&Metho
     match parts {
         ["ip-pools"] if *method==Method::GET=>{
             let rows=sqlx::query("SELECT * FROM ip_pools ORDER BY name LIMIT 20").fetch_all(&state.db).await?;
-            Ok(Json(ok(json!(rows.into_iter().map(|row|json!({"id":row.get::<Uuid,_>("id"),"name":row.get::<String,_>("name"),"node_id":row.get::<Uuid,_>("node_id"),"group_id":row.get::<Uuid,_>("group_id"),"addresses":row.get::<Value,_>("addresses"),"automatic":row.get::<bool,_>("automatic"),"status":row.get::<String,_>("status"),"deployment":row.get::<Option<i64>,_>("deployment"),"last_rotation":row.get::<Option<DateTime<Utc>>,_>("last_rotation")})).collect::<Vec<_>>()))))
+            Ok(Json(ok(json!(rows.into_iter().map(|row|json!({"id":row.get::<Uuid,_>("id"),"name":row.get::<String,_>("name"),"node_id":row.get::<Uuid,_>("node_id"),"group_id":row.get::<Uuid,_>("group_id"),"addresses":row.get::<Value,_>("addresses"),"automatic":row.get::<bool,_>("automatic"),"status":row.get::<String,_>("status"),"deployment":row.get::<Option<i64>,_>("deployment"),"preparation_error":row.get::<Option<String>,_>("preparation_error"),"preparation_checked_at":row.get::<Option<DateTime<Utc>>,_>("preparation_checked_at"),"last_rotation":row.get::<Option<DateTime<Utc>>,_>("last_rotation")})).collect::<Vec<_>>()))))
         }
         ["ip-pools"] if *method==Method::POST=>{
             user.require("owner")?;let node_id=parse_id(field(&body,"node_id")?)?;let group_id=parse_id(field(&body,"group_id")?)?;

@@ -16,6 +16,9 @@ pub(crate) struct State {
     pub hash_slots: Arc<tokio::sync::Semaphore>,
     #[cfg(test)]
     pub cloudflare_origin: Option<Arc<str>>,
+    /// Local Telegram endpoint override for isolated delivery tests.
+    #[cfg(test)]
+    pub telegram_origin: Option<Arc<str>>,
     /// Fixed probe round for integration fixtures; production always uses the wall clock.
     #[cfg(test)]
     pub probe_round_override: Option<i64>,

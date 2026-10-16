@@ -43,7 +43,7 @@ pub(super) async fn update(state:&State,user:&Session,id:Uuid,body:&Value)->Resu
             }
         }
         if !(2..=8).contains(&ips.len()){return Err(conflict("node_address_pool_size"));}
-        sqlx::query("UPDATE ip_pools SET addresses=$2,automatic=false,status='preparing',updated_at=now() WHERE id=$1").bind(pool.get::<Uuid,_>("id")).bind(json!(ips)).execute(&mut *tx).await?;
+        sqlx::query("UPDATE ip_pools SET addresses=$2,automatic=false,status='preparing',preparation_error=NULL,preparation_checked_at=NULL,updated_at=now() WHERE id=$1").bind(pool.get::<Uuid,_>("id")).bind(json!(ips)).execute(&mut *tx).await?;
     }
     for key in ["ipv4","ipv6"]{document[key]=desired[key].clone();}
     sqlx::query("UPDATE nodes SET document=$2,snapshot='{}',collected_at=NULL WHERE id=$1").bind(id).bind(document).execute(&mut *tx).await?;

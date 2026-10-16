@@ -16,7 +16,7 @@ async fn cascades_dependencies_without_deleting_shared_resources() {
         let search=search.clone();Box::pin(async move {sqlx::query(&format!("SET search_path TO {search}")).execute(conn).await?;Ok(())})
     }).connect(&url).await.unwrap();
     sqlx::migrate!().run(&db).await.unwrap();
-    let state=State{db, vault:Arc::new(Vault::new(&[17;32]).unwrap()), client:reqwest::Client::new(), geoip:Arc::new(crate::geoip::GeoIp::unavailable("missing")), hash_slots:Arc::new(tokio::sync::Semaphore::new(1)),cloudflare_origin:None,probe_round_override:None,origin:"https://fleet.test".into(),assets:Arc::new("/tmp/missing".into())};
+    let state=State{db, vault:Arc::new(Vault::new(&[17;32]).unwrap()), client:reqwest::Client::new(), geoip:Arc::new(crate::geoip::GeoIp::unavailable("missing")), hash_slots:Arc::new(tokio::sync::Semaphore::new(1)),telegram_origin:None,cloudflare_origin:None,probe_round_override:None,origin:"https://fleet.test".into(),assets:Arc::new("/tmp/missing".into())};
     let owner=Session{id:Uuid::new_v4(),username:"owner".into(),role:"owner".into()};
     sqlx::query("INSERT INTO administrators(id,username,password_hash,totp_cipher,role) VALUES($1,'owner','','','owner')").bind(owner.id).execute(&state.db).await.unwrap();
     let cert=Uuid::new_v4();let profile=Uuid::new_v4();let a=Uuid::new_v4();let b=Uuid::new_v4();let group=Uuid::new_v4();let pool=Uuid::new_v4();

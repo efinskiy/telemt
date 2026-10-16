@@ -280,3 +280,18 @@ Verification: One PostgreSQL/router integration passed (7.21 seconds), covering 
 - [x] Update operator descriptions and run only focused policy tests, one existing router integration and the frontend build.
 
 Verification: Rust 1.88 compiled the backend; three focused probe policy tests passed, followed by one PostgreSQL/router integration (7.03 seconds) using a single registered agent. The integration retained DNS conflict/recovery checks and added timestamp expiry coverage. Frontend typecheck/production build and git diff --check passed. No full suite or production DNS operation was run.
+
+## IP-pool preparation completion
+
+- [x] Separate applied listener preparation from DNS-group verification; retain all DNS rotation guards.
+- [x] Persist preparation failure diagnostics, retry automatically and display the reason and node name in the pool UI.
+- [x] Verify pending/error recovery and unverified-group preparation in one existing backend integration and one frontend scenario.
+
+Verification: One Rust 1.88 PostgreSQL/router integration passed (6.85 seconds), including the new migration, recorded pending-deployment error, recovery to prepared with configuration_verified=false, and rejection of DNS automation until verification. One Chromium pool scenario passed with frontend build/typecheck (5.1 seconds); inspected its diagnostic screenshot. git diff --check passed. No production changes or broad test suite; temporary PostgreSQL stopped.
+
+## Telegram rotation notifications (2026-10-16)
+
+- [x] Persist owner-only Telegram settings with encrypted credentials and revision checks.
+- [x] Queue confirmed IP/server changes transactionally and deliver independently with bounded retries.
+- [x] Add System → Notifications settings, test delivery and compact history.
+- [x] Rust 1.88 cargo check passed; the focused PostgreSQL integration test passed (6.98s); one Playwright scenario passed (4.4s including frontend production build/type checking). Screenshot reviewed. Telegram and Cloudflare used local mocks; no production messages or DNS changes.

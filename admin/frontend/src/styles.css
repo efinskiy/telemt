@@ -313,3 +313,10 @@ footer b { font-weight: 400; opacity: .6; margin-left: 4px; }
 @media (prefers-reduced-motion:reduce) { button { transition: none; } }
 
 .compose-output { max-height: 55vh; overflow: auto; white-space: pre; padding: 1rem; background: var(--page); border: 1px solid var(--border); border-radius: 10px; font-size: .8rem; }
+
+.notification-page { display: grid; gap: 20px; }
+.notification-page fieldset { display: grid; gap: 16px; min-width: 0; }
+.notification-page fieldset label { font-size: 14px; }
+.notification-page .form-grid > label { display: flex; flex-direction: column; align-items: stretch; gap: 8px; }
+.notification-page td { vertical-align: top; }
+.notification-page details { max-width: 480px; overflow-wrap: anywhere; }

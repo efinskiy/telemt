@@ -4,6 +4,7 @@ import { stateLabel } from './labels';
 import { Dialog } from './components';
 
 const paths: Record<string, string> = {
+  bell: 'M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9 M10 21h4',
   overview: 'M3 3h7v7H3z M14 3h7v7h-7z M3 14h7v7H3z M14 14h7v7h-7z',
   server: 'M4 3h16v7H4z M4 14h16v7H4z M7 6.5h.01 M7 17.5h.01 M16 6.5h1 M16 17.5h1',
   profiles: 'M4 3h10l6 6v12H4z M14 3v6h6 M8 13h8 M8 17h5',
@@ -33,7 +34,7 @@ export function Icon({ name, className = '' }: { name: string; className?: strin
   return <svg className={`icon ${className}`} width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d={paths[name] ?? paths.activity} /></svg>;
 }
 export function Brand() { return <div className="brand"><span className="brand-symbol" aria-hidden="true"><Icon name="shaping" /></span><div className="brand-name">telemt<span>Fleet</span></div></div>; }
-const icons: Record<string, string> = { 'Обзор': 'overview', 'Серверы': 'server', 'Общие профили': 'profiles', 'Сертификаты': 'certificate', 'Пользователи': 'users', 'Конфигурация': 'settings', 'Шейпер': 'shaping', 'Диагностика': 'activity', 'Внешние проверки': 'globe', 'Переключение DNS': 'dns', 'Ротация IP': 'rotate', 'Операции': 'operations', 'Аудит': 'audit', 'Администраторы': 'shield' };
+const icons: Record<string, string> = { 'Обзор': 'overview', 'Серверы': 'server', 'Общие профили': 'profiles', 'Сертификаты': 'certificate', 'Пользователи': 'users', 'Конфигурация': 'settings', 'Шейпер': 'shaping', 'Диагностика': 'activity', 'Внешние проверки': 'globe', 'Переключение DNS': 'dns', 'Ротация IP': 'rotate', 'Операции': 'operations', 'Аудит': 'audit', 'Уведомления': 'bell', 'Администраторы': 'shield' };
 export const pageIcon = (page: string) => icons[page] ?? 'overview';
 const navigationGroups = [
   { title: 'Панель управления', pages: ['Обзор'] },
@@ -41,7 +42,7 @@ const navigationGroups = [
   { title: 'Трафик и доступ', pages: ['Пользователи', 'Конфигурация', 'Шейпер'] },
   { title: 'Наблюдение', pages: ['Диагностика', 'Внешние проверки'] },
   { title: 'Отказоустойчивость', pages: ['Переключение DNS', 'Ротация IP'] },
-  { title: 'Система', pages: ['Операции', 'Аудит', 'Администраторы'] },
+  { title: 'Система', pages: ['Операции', 'Аудит', 'Уведомления', 'Администраторы'] },
 ];
 const descriptions: Record<string, string> = {
   'Обзор': 'Состояние инфраструктуры, нагрузка и подключения в одном месте.',
@@ -57,6 +58,7 @@ const descriptions: Record<string, string> = {
   'Ротация IP': 'Пулы адресов нод и правила автоматической смены IP.',
   'Операции': 'Ход выполнения изменений и результаты по каждому серверу.',
   'Аудит': 'История действий администраторов и изменений в кабинете.',
+  'Уведомления': 'Доставка событий ротации IP и смены сервера в Telegram.',
   'Администраторы': 'Учётные записи, роли и доступ к управлению Fleet.',
 };
 /** Page metadata keeps desktop and mobile navigation in the same hierarchy. */
@@ -84,7 +86,7 @@ export function ThemeControl({ theme, change }: { theme: Theme; change: (theme: 
 }
 export function Navigation({ pages, page, select, user, collapsed, toggle, logout }: { pages: string[]; page: string; select: (page: string) => void; user: User; collapsed: boolean; toggle: () => void; logout: () => void }) {
   const [more, setMore] = useState(false);
-  const visible = pages.filter(item => item !== 'Администраторы' || user.role === 'owner');
+  const visible = pages.filter(item => !['Администраторы', 'Уведомления'].includes(item) || user.role === 'owner');
   const quick = ['Обзор', 'Серверы', 'Пользователи', 'Шейпер'];
   const go = (item: string) => { select(item); setMore(false); };
   const item = (name: string) => <button key={name} title={name} aria-label={name} aria-current={page === name ? 'page' : undefined} className={page === name ? 'nav-active' : ''} onClick={() => go(name)}><Icon name={pageIcon(name)} /><span>{name}</span></button>;

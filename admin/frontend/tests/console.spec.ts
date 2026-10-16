@@ -72,14 +72,15 @@ test('WEB commands use the inspected process identity and one server target', as
 });
 
 
-test('assigned IP pool creation defaults off and cannot select a local unusable address', async ({ page }) => {
+test('assigned IP pool creation defaults off and cannot select a local unusable address', async ({ page }, testInfo) => {
+  await page.clock.install();
   await fixture(page, 'owner');
   const group = { id: second, name: 'Single-server DNS', active_node: first, automatic: false, status: 'disabled', document: { node_ids: [first] }, observed: {} };
   await page.route('**/api/groups', route => route.fulfill({ json: { ok: true, data: [group] } }));
-  let created = false;
+  let created = false, poolStatus = 'unprepared'; let preparationError: string | null = null;
   await page.route('**/api/ip-pools', async route => {
     if (route.request().method() === 'POST') { created = true; await route.fulfill({ json: { ok: true, data: { id: second } } }); }
-    else await route.fulfill({ json: { ok: true, data: created ? [{ id: second, name: 'Assigned pool', node_id: first, group_id: second, addresses: ['192.0.2.1', '192.0.2.3'], automatic: false, status: 'unprepared' }] : [] } });
+    else await route.fulfill({ json: { ok: true, data: created ? [{ id: second, name: 'Assigned pool', node_id: first, group_id: second, addresses: ['192.0.2.1', '192.0.2.3'], automatic: false, status: poolStatus, preparation_error: preparationError }] : [] } });
   });
   await page.getByRole('button', { name: 'Обновить', exact: true }).click();
   await page.getByRole('navigation').getByRole('button', { name: 'Ротация IP', exact: true }).click();
@@ -95,6 +96,15 @@ test('assigned IP pool creation defaults off and cannot select a local unusable 
   await expect(page.getByRole('button', { name: 'Включить авторотацию' })).toBeVisible();
   await page.getByRole('button', { name: 'Открыть пул' }).click();
   await expect(page.getByRole('dialog').getByText('Авторотация: выключена.', { exact: false })).toBeVisible();
+  poolStatus = 'preparing'; preparationError = 'managed_node_not_ready';
+  await page.clock.fastForward(5000);
+  await expect(dialog.getByRole('status')).toContainText('Нода ещё не подтвердила');
+  await expect(page.getByRole('row').filter({ hasText: 'Assigned pool' })).toContainText('Primary');
+  await page.screenshot({ path: testInfo.outputPath('pool-preparation.png'), fullPage: true });
+  poolStatus = 'prepared'; preparationError = null;
+  await page.clock.fastForward(5000);
+  await expect(dialog.getByText('IP подготовлены', { exact: true })).toBeVisible();
+  await expect(dialog.getByRole('status')).toHaveCount(0);
 });
 
 test('node deletion is one cascade action and direct registration is absent', async ({ page }) => {
@@ -359,4 +369,35 @@ test('forced server switch previews DNS, fences stale confirmation and respects 
   await page.getByRole('button', { name: 'Обновить', exact: true }).click();
   await page.getByRole('navigation').getByRole('button', { name: 'Переключение DNS', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Сменить активный сервер', exact: true })).toHaveCount(0);
+});
+
+test('Telegram notification settings protect the token and show delivery history', async ({ page }) => {
+  await fixture(page, 'owner');
+  let settings = { revision: 1, enabled: false, chat_id: '', token_configured: false, ip_rotation: true, server_switch: true };
+  let tests = 0;
+  await page.route('**/api/notifications**', async route => {
+    const path = new URL(route.request().url()).pathname;
+    if (path.endsWith('/history')) return route.fulfill({ json: { ok: true, data: tests ? [{ id: 'test', kind: 'test', status: 'sent', attempts: 1, error: null, created_at: new Date().toISOString(), message: 'Telemt Fleet: проверочное уведомление.' }] : [] } });
+    if (path.endsWith('/test')) { tests++; return route.fulfill({ json: { ok: true, data: { id: 'test' } } }); }
+    if (route.request().method() === 'PUT') {
+      const body = route.request().postDataJSON();
+      expect(body.bot_token).toBe('123456:abcdefghijklmnopqrstuvwxyzABCDE');
+      expect(route.request().headers()['x-csrf-token']).toBe('fixture-csrf');
+      settings = { revision: 2, enabled: body.enabled, chat_id: body.chat_id, token_configured: true, ip_rotation: true, server_switch: true };
+    }
+    await route.fulfill({ json: { ok: true, data: settings } });
+  });
+  await page.goto('/');
+  await page.getByRole('navigation').getByRole('button', { name: 'Уведомления', exact: true }).click();
+  await page.getByLabel('Получатель (chat ID)').fill('-1001234567890');
+  await page.getByLabel('Токен бота', { exact: true }).fill('123456:abcdefghijklmnopqrstuvwxyzABCDE');
+  await page.getByLabel('Включить уведомления').check();
+  await expect(page.getByRole('button', { name: 'Отправить проверку' })).toBeDisabled();
+  await page.getByRole('button', { name: 'Сохранить', exact: true }).click();
+  await expect(page.getByLabel('Токен бота', { exact: true })).toHaveValue('');
+  await page.getByRole('button', { name: 'Отправить проверку' }).click();
+  await expect(page.getByRole('cell', { name: 'Доставлено', exact: true })).toBeVisible();
+  await page.screenshot({ path: '/tmp/telemt-notifications.png', fullPage: true });
+  await fixture(page, 'viewer'); await page.reload();
+  await expect(page.getByRole('navigation').getByRole('button', { name: 'Уведомления', exact: true })).toHaveCount(0);
 });

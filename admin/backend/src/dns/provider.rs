@@ -135,6 +135,7 @@ pub(crate) fn matches_intent(actual:&Value,intent:&Value)->bool {
 }
 async fn finish(state:&State,change:Uuid,group:Uuid,target:Uuid,actual:Value,actor:Option<Uuid>)->Result<()> {
     let mut tx=state.db.begin().await?;
+    crate::notifications::enqueue(&mut tx,change,group,target,&actual,actor).await?;
     crate::rotation::finish_dns(&mut tx,change).await?;
     for (family,key) in [("A","ipv4"),("AAAA","ipv6")] {if let Some(ip)=actual[family]["content"].as_str(){
         sqlx::query("UPDATE nodes SET document=jsonb_set(document,$2,$3) WHERE id=$1").bind(target).bind(vec![key]).bind(json!(ip)).execute(&mut *tx).await?;

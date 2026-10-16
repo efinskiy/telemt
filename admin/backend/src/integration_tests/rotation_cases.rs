@@ -33,14 +33,22 @@ pub(super) async fn run(state:&State,app:&Router,mock:&Mock,nodes:&[Uuid],owner:
     let (status,result,_)=request(app,"/api/ip-pools","POST",body,Some(owner),true).await;assert_eq!(status,StatusCode::OK,"{result}");let pool=result["data"]["id"].as_str().unwrap();
     assert_eq!(request(app,&format!("/api/ip-pools/{pool}/prepare"),"POST",json!({"revision":"stale"}),Some(owner),true).await.0,StatusCode::CONFLICT);
     let (status,result,_)=request(app,&format!("/api/ip-pools/{pool}/prepare"),"POST",json!({"revision":"r1"}),Some(owner),true).await;assert_eq!(status,StatusCode::OK,"{result}");
+    crate::rotation::tick(state).await.unwrap();
+    let waiting=sqlx::query("SELECT status,preparation_error,preparation_checked_at IS NOT NULL AS checked FROM ip_pools WHERE id=$1").bind(Uuid::parse_str(pool).unwrap()).fetch_one(&state.db).await.unwrap();
+    assert_eq!(waiting.get::<String,_>("status"),"preparing");assert_eq!(waiting.get::<String,_>("preparation_error"),"managed_node_not_ready");assert!(waiting.get::<bool,_>("checked"));
     let deployment=sqlx::query("SELECT d.* FROM deployments d JOIN managed_nodes m ON m.desired_revision=d.id WHERE m.node_id=$1").bind(node).fetch_one(&state.db).await.unwrap();let did:i64=deployment.get("id");
     let raw=state.vault.open(&deployment.get::<String,_>("bundle_cipher"),&format!("deployment:{node}:{did}")).unwrap();let bundle:telemt_managed::Bundle=serde_json::from_str(&raw).unwrap();
     assert_eq!(bundle.public_ips.len(),4);assert!(bundle.nginx.contains("192.0.2.3:443"));assert!(bundle.nginx.contains("X-Telemt-Public-Address"));
     let config:toml::Value=toml::from_str(&bundle.config).unwrap();assert_eq!(config["web"]["vhosts"][0]["public_addrs"].as_array().unwrap().len(),4);
     *mock.config.lock().unwrap()=serde_json::to_value(config).unwrap();
     sqlx::query("UPDATE managed_nodes SET applied_revision=desired_revision,status='applied',last_seen=now() WHERE node_id=$1").bind(node).execute(&state.db).await.unwrap();
+    sqlx::query("UPDATE failover_groups SET document=jsonb_set(document,'{configuration_verified}','false') WHERE id=$1").bind(group).execute(&state.db).await.unwrap();
     crate::rotation::tick(state).await.unwrap();
     assert_eq!(sqlx::query_scalar::<_,String>("SELECT status FROM ip_pools WHERE id=$1").bind(Uuid::parse_str(pool).unwrap()).fetch_one(&state.db).await.unwrap(),"prepared");
+    assert!(sqlx::query_scalar::<_,Option<String>>("SELECT preparation_error FROM ip_pools WHERE id=$1").bind(Uuid::parse_str(pool).unwrap()).fetch_one(&state.db).await.unwrap().is_none());
+    let (status,result,_)=request(app,&format!("/api/ip-pools/{pool}"),"PATCH",json!({"automatic":true}),Some(owner),true).await;
+    assert_eq!(status,StatusCode::CONFLICT);assert_eq!(result["error"]["code"],"rotation_group_or_configuration_not_ready");
+    sqlx::query("UPDATE failover_groups SET document=jsonb_set(document,'{configuration_verified}','true') WHERE id=$1").bind(group).execute(&state.db).await.unwrap();
     for ip in ["192.0.2.1","2001:db8::1"]{seed(state,node,agents,ip,false).await;}
     for ip in ["192.0.2.3","192.0.2.4"]{seed(state,node,agents,ip,true).await;}
     for ip in ["192.0.2.2","2001:db8::2"]{seed(state,reserve,agents,ip,true).await;}
