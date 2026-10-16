@@ -1,10 +1,12 @@
 use super::*;
 use crate::probes::Health;
 
+/// Serialize DNS and listener mutations with the existing group coordinator.
 pub(super) async fn coordinator(state:&State)->Result<sqlx::Transaction<'_,sqlx::Postgres>> {
     let mut tx=state.db.begin().await?;let locked:bool=sqlx::query_scalar("SELECT pg_try_advisory_xact_lock($1)").bind(crate::state::DNS_COORDINATOR_LOCK).fetch_one(&mut *tx).await?;
     if !locked{return Err(conflict("dns_coordinator_busy"));}Ok(tx)
 }
+/// Validate managed listeners, ownership and compatibility before admitting a rotation.
 pub(super) async fn ready(state:&State,pool:&sqlx::postgres::PgRow)->Result<Value> {
     let node_id:Uuid=pool.get("node_id");let owning=node(state,node_id).await?;let doc:Value=owning.get("document");
     let group=crate::dns::load(state,pool.get("group_id")).await?;let group_doc:Value=group.get("document");
@@ -33,6 +35,7 @@ async fn prepared(state:&State,pool:&sqlx::postgres::PgRow)->Result<Value> {
     for ip in pool.get::<Value,_>("addresses").as_array().ok_or_else(bad)? {if !has_listener(&assigned,ip.as_str().ok_or_else(bad)?,port){return Err(conflict("reserve_ip_not_prepared"));}}
     Ok(assigned)
 }
+/// Stage a shared-profile deployment while leaving DNS unchanged.
 pub(super) async fn prepare(state:&State,id:Uuid,actor:Uuid,revision:&str)->Result<()> {
     let mut tx=coordinator(state).await?;let pool=load(state,id).await?;let node_id:Uuid=pool.get("node_id");
     guard_node(state,node_id).await?;
@@ -42,6 +45,7 @@ pub(super) async fn prepare(state:&State,id:Uuid,actor:Uuid,revision:&str)->Resu
     sqlx::query("UPDATE ip_pools SET deployment=$2,automatic=false,status='preparing',preparation_error=NULL,preparation_checked_at=NULL,updated_at=now() WHERE id=$1").bind(id).bind(deployment).execute(&mut *tx).await?;
     audit_tx(&mut tx,actor,"ip_pool.prepare",id,json!({"deployment":deployment,"dns_unchanged":true,"restart_required":true})).await?;tx.commit().await?;Ok(())
 }
+/// Persist a rotation only after rechecking the reviewed target and failure policy.
 pub(super) async fn enqueue(state:&State,id:Uuid,new_ip:&str,actor:Option<Uuid>,reason:&str,preview:Option<&Value>)->Result<Uuid> {
     let mut tx=coordinator(state).await?;let pool=load(state,id).await?;let node_id:Uuid=pool.get("node_id");
     if actor.is_none()&&!pool.get::<bool,_>("automatic"){return Err(conflict("ip_rotation_disabled"));}
@@ -87,12 +91,16 @@ async fn pending_step(state:&State,id:Uuid)->Result<()> {
             crate::dns::provider::rotate_locked(state,pool.get("group_id"),node_id,row.get("actor"),id,intent).await?;
     }tx.commit().await?;Ok(())
 }
+/// Advance pending operations and reconcile the current automation status.
 pub(crate) async fn tick(state:&State)->anyhow::Result<()> {
     tick_inner(state).await.map_err(|error|anyhow::anyhow!(error.1))
 }
 async fn tick_inner(state:&State)->Result<()> {
     let pending:Vec<Uuid>=sqlx::query_scalar("SELECT id FROM ip_rotations WHERE state IN('queued','dns_pending') ORDER BY created_at LIMIT 20").fetch_all(&state.db).await?;
     for id in pending {if let Err(error)=pending_step(state,id).await {sqlx::query("UPDATE ip_pools SET status=$2 WHERE id=(SELECT pool_id FROM ip_rotations WHERE id=$1)").bind(id).bind(error.1).execute(&state.db).await?;}}
+    // Selection diagnostics stop being current after failover or an automation pause.
+    // Preserve preparation and unresolved-operation errors; this statement never changes eligibility or DNS.
+    sqlx::query("UPDATE ip_pools p SET status=CASE WHEN p.automatic THEN 'standby' ELSE 'disabled' END FROM failover_groups g WHERE g.id=p.group_id AND (NOT p.automatic OR g.active_node IS DISTINCT FROM p.node_id) AND p.status IN ('no_healthy_ip_reserve','probe_state_unknown','healthy','cooldown','waiting_for_quorum','standby') AND p.status IS DISTINCT FROM CASE WHEN p.automatic THEN 'standby' ELSE 'disabled' END AND NOT EXISTS(SELECT 1 FROM ip_rotations r WHERE r.pool_id=p.id AND r.state IN ('queued','dns_pending','unknown'))").execute(&state.db).await?;
     let pools=sqlx::query("SELECT * FROM ip_pools ORDER BY id LIMIT 20").fetch_all(&state.db).await?;
     for pool in pools {let id:Uuid=pool.get("id");let node_id:Uuid=pool.get("node_id");
         if pool.get::<String,_>("status")=="preparing" {
@@ -112,12 +120,13 @@ async fn tick_inner(state:&State)->Result<()> {
             if let Some(ip)=doc[key].as_str().filter(|ip|!ip.is_empty()){let current=health(state,node_id,ip).await?;failed|=current==Health::Failed;unknown|=current==Health::Unknown;}}
         let mut status=if unknown{"probe_state_unknown"}else if failed{"no_healthy_ip_reserve"}else{"healthy"};
         if failed&&!unknown {for ip in selected.as_array().ok_or_else(bad)? {let Some(ip)=ip.as_str()else{continue;};let family=ip.parse::<std::net::IpAddr>().map_err(|_|bad())?.is_ipv4();let key=if family{"ipv4"}else{"ipv6"};let Some(old)=doc[key].as_str()else{continue;};if old==ip||!has_listener(&assigned,ip,doc["port"].as_u64().ok_or_else(bad)?)||health(state,node_id,old).await?!=Health::Failed{continue;}
-            if matches!(health(state,node_id,ip).await?,Health::Healthy|Health::Recovered) {match enqueue(state,id,ip,None,"ten_failed_checks_one_agent_within_five_minutes",None).await{Ok(_)=>status="rotation_queued",Err(error)=>status=error.1,}break;}
+            if matches!(health(state,node_id,ip).await?,Health::Healthy|Health::Recovered) {match enqueue(state,id,ip,None,"tcp_tls22_continuous_timeouts_five_minutes",None).await{Ok(_)=>status="rotation_queued",Err(error)=>status=error.1,}break;}
         }}
         sqlx::query("UPDATE ip_pools SET status=$2 WHERE id=$1 AND automatic").bind(id).bind(status).execute(&state.db).await?;
     }Ok(())
 }
 
+/// Use the group domain when constructing retained listener announcements.
 pub(super) async fn listener_document(state:&State,pool:&sqlx::postgres::PgRow)->Result<Value> {
     let mut document:Value=node(state,pool.get("node_id")).await?.get("document");let group=crate::dns::load(state,pool.get("group_id")).await?;document["announce_domain"]=group.get::<Value,_>("document")["domain"].clone();Ok(document)
 }

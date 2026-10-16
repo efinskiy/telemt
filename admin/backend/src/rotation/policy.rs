@@ -34,18 +34,12 @@ pub(super) fn listener_plan(listeners:&Value,selected:&Value,document:&Value)->R
 }
 
 pub(super) async fn health(state:&State,node_id:Uuid,ip:&str)->Result<Health> {
-    let current=evidence(state,node_id,ip).await?[0];let mut tx=state.db.begin().await?;
+    let current=evidence(state,node_id,ip).await?;let mut tx=state.db.begin().await?;
     sqlx::query("INSERT INTO address_health(node_id,address) VALUES($1,$2) ON CONFLICT DO NOTHING").bind(node_id).bind(ip).execute(&mut *tx).await?;
     let previous:String=sqlx::query_scalar("SELECT status FROM address_health WHERE node_id=$1 AND address=$2 FOR UPDATE").bind(node_id).bind(ip).fetch_one(&mut *tx).await?;
     let quarantined=["failed","recovering"].contains(&previous.as_str());let current=if quarantined&&!matches!(current,Health::Failed|Health::Recovered){Health::Unknown}else{current};
     let status=match current{Health::Failed=>"failed",Health::Healthy=>"healthy",Health::Recovered=>"recovered",Health::Unknown if quarantined=>"recovering",_=>"unknown"};
     sqlx::query("UPDATE address_health SET status=$3 WHERE node_id=$1 AND address=$2").bind(node_id).bind(ip).bind(status).execute(&mut *tx).await?;tx.commit().await?;Ok(current)
-}
-
-/// Display each transport using the same single-agent failure window as rotation decisions.
-pub(super) async fn port_health(state:&State,node:Uuid,ip:&str)->Result<[String;2]> {
-    let health=evidence(state,node,ip).await?;
-    Ok([format!("{:?}",health[1]).to_ascii_lowercase(),format!("{:?}",health[2]).to_ascii_lowercase()])
 }
 
 #[cfg(test)]mod tests {

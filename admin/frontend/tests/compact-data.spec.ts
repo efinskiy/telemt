@@ -10,7 +10,7 @@ test('compact probe and audit tables keep payloads out of rows on desktop and mo
     let data: unknown = [];
     if (path === '/api/session') data = { user: { id, username: 'owner', role: 'owner' }, csrf: 'test' };
     if (path === '/api/nodes') data = [{ id, name: 'Москва — 01', enabled: true, document: {}, collected_at: new Date().toISOString(), snapshot: {} }];
-    if (path === '/api/probes') data = Array.from({ length: 60 }, (_, index) => ({ id: String(index), round: 119472704, node_id: id, ip: '170.168.5.27', family: 4, network: 'AS202799', completed_at: new Date().toISOString(), result: { latency_ms: 161, network_ok: index !== 1, reachable: true, stage: 'ok', web_checked: true, native: { reachable: true, latency_ms: 161, stage: 'ok' }, web: { reachable: true, latency_ms: 125, stage: 'ok' } } }));
+    if (path === '/api/probes') data = Array.from({ length: 60 }, (_, index) => ({ id: String(index), round: 119472704, node_id: id, ip: '170.168.5.27', family: 4, network: 'AS202799', completed_at: new Date().toISOString(), result: { latency_ms: 161, network_ok: index !== 1, reachable: true, stage: 'ok', check: 'tcp_tls22', tcp22: { port: 22, reachable: true, latency_ms: 161, stage: 'wrong_version_number', phase: 'tls' } } }));
     if (path === '/api/audit') data = [{ id: 1, action: 'node.enrollment.create', at: new Date().toISOString(), outcome: { status: 'ok', nested: { trace: Array.from({ length: 100 }, (_, i) => ({ index: i, state: 'ok' })) } } }];
     await route.fulfill({ json: { ok: true, data } });
   });
@@ -21,15 +21,15 @@ test('compact probe and audit tables keep payloads out of rows on desktop and mo
   await expect(rows.first()).toContainText('Москва — 01');
   await expect(rows.first()).toContainText('170.168.5.27');
   await expect(rows.first()).toContainText('161 мс');
-  await expect(rows.first()).toContainText('125 мс');
-  await expect(rows.nth(1).getByText('Неизвестно', { exact: true })).toHaveCount(2);
+  await expect(rows.first()).toContainText('WRONG_VERSION_NUMBER');
+  await expect(rows.nth(1).getByText('Неизвестно', { exact: true })).toHaveCount(1);
   expect((await rows.first().boundingBox())!.height).toBeLessThan(110);
   await expect(page.locator('td .data-sections')).toHaveCount(0);
   await page.screenshot({ path: testInfo.outputPath('compact-probes-desktop.png') });
   await page.getByRole('button', { name: 'Открыть: Результат', exact: true }).first().click();
   const dialog = page.getByRole('dialog', { name: 'Результат', exact: true });
   await expect(dialog.locator('details[open]')).toHaveCount(0);
-  await dialog.locator('summary').filter({ hasText: 'MTProxy' }).click();
+  await dialog.locator('summary').filter({ hasText: 'TCP/TLS :22' }).click();
   await expect(dialog.getByText('Доступность', { exact: true })).toHaveCount(2);
   await page.screenshot({ path: testInfo.outputPath('compact-probe-detail.png') });
   await page.keyboard.press('Escape');

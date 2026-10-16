@@ -4,10 +4,10 @@ use super::*;
 pub(super) async fn seed(state:&State,node:Uuid,agents:&[(Uuid,String)],ip:&str,good:bool) {
     sqlx::query("DELETE FROM probe_jobs WHERE node_id=$1 AND address=$2").bind(node).bind(ip).execute(&state.db).await.unwrap();
     let last=state.probe_round()-1;
-    for offset in 0..10 {for (agent,_) in agents {
-        sqlx::query("INSERT INTO probe_jobs(id,round,agent_id,node_id,family,address,expires_at,completed_at,result) VALUES($1,$2,$3,$4,$5,$6,now()+interval '1 minute',now(),$7)")
+    for offset in 0..22 {for (agent,_) in agents {
+        sqlx::query("INSERT INTO probe_jobs(id,round,agent_id,node_id,family,address,expires_at,completed_at,result) VALUES($1,$2,$3,$4,$5,$6,now()+interval '1 minute',now()-make_interval(secs => $8),$7)")
             .bind(Uuid::new_v4()).bind(last-offset).bind(agent).bind(node).bind(if ip.contains(':'){6}else{4}).bind(ip)
-            .bind(json!({"network_ok":true,"reachable":good,"native":{"reachable":good},"web":{"reachable":good}})).execute(&state.db).await.unwrap();
+            .bind(json!({"check":"tcp_tls22","network_ok":true,"reachable":good,"tcp22":{"port":22,"reachable":good,"stage":if good{"wrong_version_number"}else{"timeout"},"phase":"tls","latency_ms":1}})).bind((offset*15) as f64).execute(&state.db).await.unwrap();
     }}
     sqlx::query("UPDATE nodes SET collected_at=now() WHERE id=$1").bind(node).execute(&state.db).await.unwrap();
 }
@@ -72,12 +72,19 @@ pub(super) async fn run(state:&State,app:&Router,mock:&Mock,nodes:&[Uuid],owner:
     assert_eq!(sqlx::query_scalar::<_,Uuid>("SELECT active_node FROM failover_groups WHERE id=$1").bind(group).fetch_one(&state.db).await.unwrap(),reserve);
     assert_eq!(mock.records.lock().unwrap()["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"]["content"],"192.0.2.2");
     let (_,status,_)=request(app,&format!("/api/ip-pools/{pool}/status"),"GET",json!({}),Some(owner),false).await;
-    assert!(status["data"]["addresses"][0]["native"].is_string());assert!(status["data"]["addresses"][0]["web"].is_string());
-    // One transport failing cannot be promoted to healthy by the other transport.
+    assert_eq!(status["data"]["addresses"][0]["probe_port"],22);
+    // Recovery of a standby pool must clear the old selection error without moving DNS back.
+    for ip in ["192.0.2.1","192.0.2.3","192.0.2.4","2001:db8::1"]{seed(state,node,agents,ip,true).await;}
+    sqlx::query("UPDATE ip_pools SET status='no_healthy_ip_reserve' WHERE id=$1").bind(Uuid::parse_str(pool).unwrap()).execute(&state.db).await.unwrap();
+    crate::rotation::tick(state).await.unwrap();
+    assert_eq!(sqlx::query_scalar::<_,String>("SELECT status FROM ip_pools WHERE id=$1").bind(Uuid::parse_str(pool).unwrap()).fetch_one(&state.db).await.unwrap(),"standby");
+    assert_eq!(sqlx::query_scalar::<_,Uuid>("SELECT active_node FROM failover_groups WHERE id=$1").bind(group).fetch_one(&state.db).await.unwrap(),reserve);
+    assert_eq!(mock.records.lock().unwrap()["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"]["content"],"192.0.2.2");
+    // Historic protocol reports cannot make port-22 reachability look healthy or failed.
     seed(state,node,agents,"192.0.2.1",true).await;
-    sqlx::query("UPDATE probe_jobs SET result=jsonb_set(jsonb_set(result,'{web,reachable}','false'),'{reachable}','false') WHERE node_id=$1 AND address='192.0.2.1'").bind(node).execute(&state.db).await.unwrap();
+    sqlx::query("UPDATE probe_jobs SET result=result-'tcp22'-'check' WHERE node_id=$1 AND address='192.0.2.1'").bind(node).execute(&state.db).await.unwrap();
     let (_,status,_)=request(app,&format!("/api/ip-pools/{pool}/status"),"GET",json!({}),Some(owner),false).await;
-    assert_eq!(status["data"]["addresses"][0]["native"],"recovered");assert_eq!(status["data"]["addresses"][0]["web"],"failed");assert_eq!(status["data"]["addresses"][0]["health"],"failed");
+    assert_eq!(status["data"]["addresses"][0]["health"],"unknown");
     // Deleting the active server preserves the shared group and permits explicit recovery to a prepared pool.
     assert_eq!(request(app,&format!("/api/nodes/{reserve}"),"DELETE",json!({}),Some(owner),true).await.0,StatusCode::OK);
     assert_eq!(request(app,&format!("/api/groups/{group}"),"PATCH",json!({"node_ids":[node]}),Some(owner),true).await.0,StatusCode::OK);

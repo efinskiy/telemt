@@ -153,9 +153,8 @@ IP history lasts 60 seconds, including reconnects, and restarts reset that histo
 
 ## Install independent probes
 
-Enroll at least two agents in separate Russian provider networks. Country must be explicitly registered as `RU`; the owner verifies the actual
-provider network and site. Network labels are controller-owned; using two machines on the same network does not establish
-independent quorum. Put each issued token in that host's `secrets/probe_token`,
+Enroll at least one agent in a Russian provider network. Country must be explicitly registered as `RU`; the owner verifies the actual
+provider network and site. Network labels are controller-owned; failure evidence must come from one continuous agent history. Put each issued token in that host's `secrets/probe_token`,
 owned by its probe UID. Configure `ADMIN_DOMAIN` and an independently reachable
 HTTPS reference, then run on each external host:
 
@@ -165,10 +164,12 @@ docker compose -f compose.yml --profile probe up -d --no-deps probe
 ```
 
 The agent polls HTTPS and probes only controller-enrolled literal addresses. Its
-TCP/FakeTLS/obfuscation/MTProto exchange has a five-second overall deadline; only
-an authenticated `resPQ` with the requested nonce counts as reachable. A failed
-reference marks that network unknown. Probe tokens and test-user keys must be
-rotated by reenrollment when a probe host is replaced.
+TCP connect and TLS ClientHello on port 22 share a five-second overall deadline.
+A plaintext SSH response is classified as `wrong_version_number` and confirms a live IP.
+Only continuous timeouts spanning at least 300 seconds trigger automatic rotation;
+other errors and failed reference checks interrupt the streak. Probe tokens must be
+rotated by reenrollment when a probe host is replaced. Proxy secrets are not sent to agents.
+Update Fleet and probe images together; old agents cannot perform the new assignments.
 
 ## DNS enrollment and release order
 
@@ -184,9 +185,10 @@ changes arbitrary records or enables Cloudflare proxying.
 2. Enable shaping with measured capacities; watch rate, wait and exhaustion data.
 3. Add compatible reserves and independently authenticated probes.
 4. Preview and test a manual switch in a dedicated test zone.
-5. Enable automation last. Require ten failed checks from one agent within five minutes,
-   including a failed latest completed round, two consecutive successful reserve rounds from
-   one agent and fresh readiness. A quarantined node needs
+5. Enable automation last. Require at least 300 seconds of uninterrupted timeouts for the same
+   TCP/TLS probe on port 22 from one agent, with a fresh latest completed round.
+   Success, other errors, unknown results and missing rounds reset the timeout streak.
+   Reserve selection requires two consecutive successful rounds from one agent and fresh readiness. A quarantined node needs
    six successful rounds. Cooldown is five minutes; there is no automatic failback.
 
 Missing quorum, any unknown enrolled address family, no eligible reserve,
@@ -237,8 +239,14 @@ NAT addresses absent from the interface inventory are not accepted.
 3. Preview and apply preparation. Fleet creates an immutable deployment with native MTProxy
    and nginx HTTPS listeners on every selected IP. This deployment restarts telemt and closes
    existing sessions. Wait for its actual acknowledgement and endpoint readiness.
-4. Use at least one registered Russian probe agent. Each address gets separate,
-   concurrent native FakeTLS/MTProto and HTTPS WEB req_pq/resPQ checks, within five seconds.
+4. Use at least one registered Russian probe agent. Each address gets a
+   TCP connect followed by a TLS ClientHello on port 22, within a shared five-second deadline.
+   A plaintext SSH response (WRONG_VERSION_NUMBER in OpenSSL; InvalidContentType or
+   UnknownProtocolVersion in rustls) confirms reachability. TCP/TLS timeouts are failure
+   observations; refusals, other errors and unavailable reference networks interrupt the streak.
+   Allow probe sources to reach port 22 on every pool IP and ensure SSH listens there.
+   This checks IP reachability, not proxy health: a proxy-only TLS block with responsive SSH
+   does not trigger rotation. No SSH login or credentials are used.
 5. Enable local IP autorotation on the pool, and optionally cross-server automation on the group.
    Both are initially disabled and separately stoppable.
 
@@ -246,9 +254,11 @@ A failed published IP is replaced by a prepared healthy IP on the same server fi
 to another server is permitted only after every IP on the current server has confirmed failure.
 Unknown or stale evidence blocks escalation; a confirmed failure from one network is sufficient. A target must belong to the same profile,
 have acknowledged its desired deployment, and have a confirmed working address for each enrolled
-record family. Ten failed checks from the same agent within the last five minutes confirm failure, provided
-its latest completed round also failed. Failures need not be consecutive and are never summed
-across agents. An unavailable reference network or an expired/missing report is unknown.
+record family. Failure requires uninterrupted timeouts spanning at least 300 seconds from the
+same agent on port 22, ending in a fresh completed round. Success, other errors,
+an unavailable reference network or an expired/missing report break the streak. Timeouts are
+never combined across agents. Update Fleet and all probe agents together; historic
+WEB/MTProxy results do not count as port-22 evidence.
 Two consecutive successful rounds from one agent admit a fresh reserve; a previously failed
 address requires six consecutive successes from one agent.
 Switches retain the five-minute cooldown. Disabling local rotation does not make a healthy or
@@ -427,7 +437,7 @@ inspection rather than blindly retried. IP rotation remains asynchronous; inspec
 its status in **My operations** or wait for a confirmed-DNS notification.
 
 Node analytics show connected IPs, connections, traffic, CPU/RAM, Telegram DC
-availability and separate WEB/MTProxy health. Stale data is reported as unknown.
+availability and TCP/TLS port-22 reachability. Stale data is reported as unknown.
 Country percentages use unique IPs within the selected node, include unknown and
 truncated entries in the denominator, and require the existing local GeoIP database.
 They do not represent distinct people behind NAT or global deduplication across nodes.

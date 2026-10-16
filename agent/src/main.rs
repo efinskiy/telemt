@@ -1,13 +1,19 @@
 //! External probes poll outbound HTTPS only and never accept arbitrary targets from the public network.
-mod protocol;
-mod web;
-use serde::{Deserialize,Serialize};
+#[cfg(test)]mod protocol;
+#[cfg(test)]mod web;
+mod reachability;
+use serde::Deserialize;
+#[cfg(test)]use serde::Serialize;
 use serde_json::{Value,json};
 use std::time::Duration;
 
+#[cfg(test)]
 #[derive(Deserialize,Serialize)]
 struct Job {#[serde(default)] web_base_path:Option<String>,id:String,node_id:String,round:i64,family:i32,ip:String,port:u16,sni:String,dc:i16,secret:String,expires_at:chrono::DateTime<chrono::Utc>}
+#[cfg(test)]
 impl Drop for Job {fn drop(&mut self){use zeroize::Zeroize;self.secret.zeroize();}}
+#[derive(Deserialize)]
+struct TcpJob {id:String,ip:String,sni:String,port:u16,check:String,expires_at:chrono::DateTime<chrono::Utc>}
 async fn bounded(response:reqwest::Response,limit:usize)->anyhow::Result<Value>{let mut response=response;anyhow::ensure!(response.status().is_success(),"controller rejected request");let mut bytes=Vec::new();while let Some(chunk)=response.chunk().await?{anyhow::ensure!(bytes.len()+chunk.len()<=limit,"oversized controller response");bytes.extend(chunk);}Ok(serde_json::from_slice(&bytes)?)}
 #[tokio::main]
 async fn main()->anyhow::Result<()> {
@@ -20,18 +26,17 @@ async fn main()->anyhow::Result<()> {
     loop {
         tokio::select!{_ = &mut shutdown=>break,_ = interval.tick()=>{}}
         let jobs=async{bounded(client.get(format!("{}/agent/jobs",origin.trim_end_matches('/'))).bearer_auth(token.trim()).send().await?,256*1024).await}.await;
-        let Ok(jobs)=jobs else{eprintln!("probe controller unavailable");continue;};let jobs:Vec<Job>=serde_json::from_value(jobs["data"].clone())?;anyhow::ensure!(jobs.len()<=200,"too many jobs");
+        let Ok(jobs)=jobs else{eprintln!("probe controller unavailable");continue;};let jobs:Vec<TcpJob>=serde_json::from_value(jobs["data"].clone())?;anyhow::ensure!(jobs.len()<=200,"too many jobs");
         let network_ok=client.get(&reference).send().await.is_ok_and(|r|r.status().is_success());
         let semaphore=std::sync::Arc::new(tokio::sync::Semaphore::new(200));let mut tasks=tokio::task::JoinSet::new();
         for job in jobs {let client=client.clone();let token=token.clone();let origin=origin.clone();let semaphore=semaphore.clone();tasks.spawn(async move{
-            let permit=semaphore.acquire_owned().await?;let started=tokio::time::Instant::now();
+            let permit=semaphore.acquire_owned().await?;
+            anyhow::ensure!(job.port==reachability::PORT && job.check=="tcp_tls22","unexpected probe assignment");
             let unavailable=if chrono::Utc::now()>=job.expires_at{Some("expired")}else if !network_ok{Some("network_unknown")}else{None};
-            let (native,web)=if let Some(stage)=unavailable{(json!({"reachable":null,"stage":stage,"latency_ms":0}),json!({"reachable":null,"stage":stage,"latency_ms":0}))}else{
-                tokio::join!(measure(protocol::probe(&job)),measure(async {web::probe(&job).await.map_err(|_|"web")}))
+            let tcp22=if let Some(stage)=unavailable{json!({"port":reachability::PORT,"reachable":null,"stage":stage,"phase":null,"latency_ms":0})}else{
+                reachability::probe(&job.ip,&job.sni).await
             };drop(permit);
-            let reachable=native["reachable"]==true&&web["reachable"]==true;
-            let stage=unavailable.unwrap_or(if reachable{"ok"}else if native["reachable"]!=true{native["stage"].as_str().unwrap_or("timeout")}else{"web"});
-            let body=json!({"id":job.id,"reachable":reachable,"web_checked":unavailable.is_none(),"network_ok":network_ok,"stage":stage,"native":native,"web":web,"latency_ms":started.elapsed().as_millis().min(5000) as u64});
+            let body=json!({"id":job.id,"check":"tcp_tls22","network_ok":unavailable.is_none(),"tcp22":tcp22});
             bounded(client.post(format!("{}/agent/results",origin.trim_end_matches('/'))).bearer_auth(token.trim()).json(&body).send().await?,16*1024).await?;Ok::<_,anyhow::Error>(())
         });}
         loop {
@@ -59,10 +64,4 @@ async fn token_file(path:&str)->anyhow::Result<zeroize::Zeroizing<String>> {
     let mut bytes=zeroize::Zeroizing::new(Vec::with_capacity(66));tokio::fs::File::open(path).await?.take(67).read_to_end(&mut bytes).await?;
     let text=std::str::from_utf8(&bytes)?.trim();anyhow::ensure!(text.len()==64&&hex::decode(text).is_ok(),"invalid probe token");
     Ok(zeroize::Zeroizing::new(text.to_owned()))
-}
-
-async fn measure(probe:impl std::future::Future<Output=Result<(),&'static str>>)->Value {
-    let started=tokio::time::Instant::now();
-    let result=tokio::time::timeout(Duration::from_secs(5),probe).await.unwrap_or(Err("timeout"));
-    json!({"reachable":result.is_ok(),"stage":result.err().unwrap_or("ok"),"latency_ms":started.elapsed().as_millis().min(5000) as u64})
 }

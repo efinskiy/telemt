@@ -39,7 +39,7 @@ pub(super) async fn node(state:&State,id:Uuid)->Result<String> {
     out.push_str("Пояснение: Ресурсы ОС относятся к пространству имён ноды.");Ok(out)
 }
 fn health(value:crate::probes::Health)->&'static str {match value {crate::probes::Health::Healthy=>"доступен",crate::probes::Health::Recovered=>"восстановлен",crate::probes::Health::Failed=>"недоступен",crate::probes::Health::Unknown=>"неизвестно"}}
-/// Use the same per-transport evidence policy as automatic failover.
+/// Use the same TCP/TLS port-22 evidence policy as automatic failover.
 pub(super) async fn ips(state:&State,id:Uuid)->Result<String> {
     let row=crate::state::node(state,id).await?;let doc:Value=row.get("document");
     let pool:Option<Value>=sqlx::query_scalar("SELECT addresses FROM ip_pools WHERE node_id=$1 LIMIT 1").bind(id).fetch_optional(&state.db).await?;
@@ -49,8 +49,8 @@ pub(super) async fn ips(state:&State,id:Uuid)->Result<String> {
     let mut out=format!("Здоровье IP · {}\n",clean(&row.get::<String,_>("name"),100));
     for ip in addresses {
         let evidence=crate::probes::evidence(state,id,&ip).await?;
-        let last:Option<chrono::DateTime<chrono::Utc>>=sqlx::query_scalar("SELECT max(j.completed_at) FROM probe_jobs j JOIN agents a ON a.id=j.agent_id WHERE j.node_id=$1 AND j.address=$2 AND a.enabled AND a.country='RU'").bind(id).bind(&ip).fetch_one(&state.db).await?;
-        out.push_str(&format!("\n{ip}{}\nMTProxy: {} · WEB: {}\nИтог: {} · проверка {}\n",if doc["ipv4"]==ip||doc["ipv6"]==ip{" (текущий адрес ноды)"}else{""},health(evidence[1]),health(evidence[2]),health(evidence[0]),last.map(|at|format!("{} с назад",chrono::Utc::now().signed_duration_since(at).num_seconds().max(0))).unwrap_or_else(||"отсутствует".into())));
+        let last:Option<chrono::DateTime<chrono::Utc>>=sqlx::query_scalar("SELECT max(j.completed_at) FROM probe_jobs j JOIN agents a ON a.id=j.agent_id WHERE j.node_id=$1 AND j.address=$2 AND a.enabled AND a.country='RU' AND j.result->>'check'='tcp_tls22'").bind(id).bind(&ip).fetch_one(&state.db).await?;
+        out.push_str(&format!("\n{ip}{}\nTCP/TLS :22: {} · проверка {}\n",if doc["ipv4"]==ip||doc["ipv6"]==ip{" (текущий адрес ноды)"}else{""},health(evidence),last.map(|at|format!("{} с назад",chrono::Utc::now().signed_duration_since(at).num_seconds().max(0))).unwrap_or_else(||"отсутствует".into())));
     }
     out.push_str("\nПояснение: Неизвестно — нет свежего достаточного свидетельства; причина сбоя сети не определяется.");Ok(out)
 }

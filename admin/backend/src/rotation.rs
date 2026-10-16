@@ -67,7 +67,7 @@ pub(crate) async fn route(state:&State,user:&Session,parts:&[&str],method:&Metho
         }
         ["ip-pools",id,"status"] if *method==Method::GET=>{
             let pool=load(state,parse_id(id)?).await?;let node_id:Uuid=pool.get("node_id");let assigned=inventory(state,node_id).await?;let doc:Value=node(state,node_id).await?.get("document");let selected:Value=pool.get("addresses");let mut results=Vec::new();
-            for ip in selected.as_array().ok_or_else(bad)? {let ip=ip.as_str().ok_or_else(bad)?;let health=health(state,node_id,ip).await?;let ports=policy::port_health(state,node_id,ip).await?;results.push(json!({"ip":ip,"native":ports[0],"web":ports[1],"native_port":doc["port"],"web_port":443,"health":format!("{health:?}").to_ascii_lowercase(),"listening":has_listener(&assigned,ip,doc["port"].as_u64().ok_or_else(bad)?),"current":doc["ipv4"]==ip||doc["ipv6"]==ip}));}
+            for ip in selected.as_array().ok_or_else(bad)? {let ip=ip.as_str().ok_or_else(bad)?;let health=health(state,node_id,ip).await?;results.push(json!({"ip":ip,"probe_port":22,"health":format!("{health:?}").to_ascii_lowercase(),"listening":has_listener(&assigned,ip,doc["port"].as_u64().ok_or_else(bad)?),"current":doc["ipv4"]==ip||doc["ipv6"]==ip}));}
             Ok(Json(ok(json!({"addresses":results,"inventory":assigned}))))
         }
         ["ip-pools",id,"dns-repair-preview"] if *method==Method::GET=>{user.require("owner")?;let pool=load(state,parse_id(id)?).await?;Ok(Json(ok(recovery::dns_preview(state,&pool).await?)))}

@@ -308,3 +308,26 @@ Verification: One Rust 1.88 PostgreSQL/router integration passed (6.85 seconds),
 Verification: Rust 1.88 backend compilation and one PostgreSQL/router integration passed (7.04 seconds), including actual bot polling against a local Telegram mock, owner/CSRF checks, role revocation, cancellation, Compose delivery, replay rejection and profile revision conflicts. One country-share unit test passed; one Chromium scenario passed (4.4 seconds including production frontend build/typecheck). Mobile screenshot inspected. Existing DNS/rotation integration assertions remain intact; no production Telegram messages or DNS writes, no broad test suite. Real Telegram rich-message rendering still requires verification with the configured bot after deployment.
 
 Final verification: The final backend integration passed again (7.02 seconds). An intermediate rerun exposed the pre-existing fixture race between connection_maps disabling a node and managed_fixture checking an unauthorized agent poll; its existing assertions were left unchanged. Final frontend build/typecheck and git diff --check passed. Backend dev binary also built successfully. Temporary PostgreSQL was stopped after validation.
+
+## Standby IP-pool stale selection status (2026-10-16)
+
+- [x] Confirm the production pool is automatic but its node is no longer the active group member.
+- [x] Replace stale selection statuses with standby/disabled without overwriting preparation or unresolved DNS diagnostics.
+- [x] Translate the affected statuses and verify recovery without DNS failback in one focused backend integration.
+
+Verification: The added regression assertion failed on the original controller with no_healthy_ip_reserve instead of standby. After the fix, the existing Rust 1.88 PostgreSQL/router integration passed (6.94 seconds), preserving its existing assertions and confirming unchanged active server and DNS after all pool IPs recover. Frontend typecheck/production build and git diff --check passed. No production database/DNS changes, no commit or push; temporary PostgreSQL stopped.
+
+## Continuous timeout gate and TCP/TLS port-22 probes (2026-10-16)
+
+- [x] Require at least 300 elapsed seconds of consecutive timeouts from one agent for automatic IP rotation and server failover.
+- [x] Reset evidence on success, other errors, unknown results, missing rounds or stale observations; preserve manual overrides and recovery rules.
+- [x] Replace operational WEB/MTProxy checks with TCP connect and TLS ClientHello on port 22; treat plaintext TLS record errors as a live response.
+- [x] Stop distributing proxy secrets to probe agents; reject old reports as rotation evidence.
+- [x] Update result validation, IP-pool diagnostics, Telegram analytics, UI and rollout instructions.
+- [x] Run only focused policy/probe tests, the existing DNS/rotation integration and one frontend scenario.
+
+Initial timeout-policy checks passed before the user changed the probe target. Final validation below covers the new port-22 contract. Production services and DNS remain unchanged.
+
+Final verification: Rust 1.88 passed two backend policy tests, one real loopback SSH-banner/silent-TLS probe test and the existing PostgreSQL/router integration (7.09 seconds). The production probe configuration passed cargo check --locked --offline. One Chromium desktop/mobile scenario passed (4.3 seconds including frontend production build/typecheck); desktop screenshot inspected. Browser startup initially failed in the sandbox and passed with local execution permissions. Temporary PostgreSQL stopped. No production DNS writes, deployments, commit or push.
+
+A current-round success or unknown result also interrupts an older timeout streak immediately; the two focused policy tests passed after this final boundary check.
