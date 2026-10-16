@@ -272,3 +272,11 @@ Verification: Rust 1.88 backend check passed. One PostgreSQL/router integration 
 - [x] Add the address editor and run only the relevant backend integration and frontend browser/build checks.
 
 Verification: One PostgreSQL/router integration passed (7.21 seconds), covering offline/disabled/pending nodes, stale previews, address replacement, deployment rendering and same-node DNS refresh. Frontend production build/typecheck and one Chromium scenario passed (4.9 seconds including build); address editor and mobile switch screenshots inspected. Fixture agents were stopped during the offline scenario and resumed afterward; no existing assertions were weakened. This request explicitly supersedes the earlier forced-switch runtime readiness requirement. Automatic switching retains its existing checks. The temporary PostgreSQL instance was stopped. No production DNS changes, deployment, commit or push.
+
+## Single-agent automatic IP failover evidence
+
+- [x] Share per-agent evidence across IP rotation, node failover and port diagnostics: ten distinct failures within five minutes, with a fresh failed result.
+- [x] Admit reserves with two consecutive successful checks from one agent; retain six-check recovery, reference-network validation, local-first ordering and DNS write fences.
+- [x] Update operator descriptions and run only focused policy tests, one existing router integration and the frontend build.
+
+Verification: Rust 1.88 compiled the backend; three focused probe policy tests passed, followed by one PostgreSQL/router integration (7.03 seconds) using a single registered agent. The integration retained DNS conflict/recovery checks and added timestamp expiry coverage. Frontend typecheck/production build and git diff --check passed. No full suite or production DNS operation was run.

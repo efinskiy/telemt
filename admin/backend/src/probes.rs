@@ -52,24 +52,48 @@ pub(crate) async fn schedule(state:&State)->anyhow::Result<()> {
 // Expired assignments and a failed reference describe the agent, not node reachability.
 fn known_network(reference_ok:bool,stage:&str)->bool {reference_ok&&!matches!(stage,"expired"|"network_unknown")}
 
+/// Endpoint evidence state; unknown observations must not trigger failover.
 #[derive(Clone,Copy,Debug,PartialEq,Eq)]pub(crate) enum Health {Healthy,Recovered,Failed,Unknown}
-/// Requires complete consecutive rounds, not just two observations from one network.
-pub(crate) fn classify(rounds:&[(usize,usize)],complete:bool)->Health {
-    if !complete||rounds.is_empty(){return Health::Unknown;}
-    if rounds.len()>=3&&rounds[..3].iter().all(|(_,bad)|*bad>=2){return Health::Failed;}
-    if rounds.len()>=6&&rounds[..6].iter().all(|(good,_)|*good>=2){return Health::Recovered;}
-    if rounds.len()>=2&&rounds[..2].iter().all(|(good,_)|*good>=2){return Health::Healthy;}Health::Unknown
+// The scheduler uses 15-second rounds; twenty completed rounds cover the five-minute window.
+const FAILURE_WINDOW_SECONDS:i64=300;
+const FAILURE_WINDOW_ROUNDS:usize=20;
+const FAILURE_THRESHOLD:usize=10;
+const RESERVE_SUCCESS_ROUNDS:usize=2;
+const RECOVERY_SUCCESS_ROUNDS:usize=6;
+
+/// Count distinct failures per agent, with current evidence required before any decision.
+fn classify(observations:&[(Uuid,i64,Option<bool>)],last:i64)->Health {
+    let mut agents:std::collections::HashMap<Uuid,[Option<bool>;FAILURE_WINDOW_ROUNDS]>=std::collections::HashMap::new();
+    for &(agent,round,result) in observations {
+        let Some(offset)=last.checked_sub(round).and_then(|offset|usize::try_from(offset).ok()).filter(|offset|*offset<FAILURE_WINDOW_ROUNDS)else{continue;};
+        agents.entry(agent).or_insert([None;FAILURE_WINDOW_ROUNDS])[offset]=result;
+    }
+    if agents.values().any(|rounds|rounds[0]==Some(false)&&rounds.iter().filter(|value|**value==Some(false)).count()>=FAILURE_THRESHOLD){return Health::Failed;}
+    if agents.values().any(|rounds|rounds[..RECOVERY_SUCCESS_ROUNDS].iter().all(|value|*value==Some(true))){return Health::Recovered;}
+    if agents.values().any(|rounds|rounds[..RESERVE_SUCCESS_ROUNDS].iter().all(|value|*value==Some(true))){return Health::Healthy;}
+    Health::Unknown
+}
+
+/// Shared bounded evidence for node decisions, local IP rotation and transport diagnostics.
+pub(crate) async fn evidence(state:&State,node:Uuid,ip:&str)->anyhow::Result<[Health;3]> {
+    let last=state.probe_round()-1;
+    let rows=sqlx::query("SELECT j.round,j.agent_id,j.result FROM probe_jobs j JOIN agents a ON a.id=j.agent_id WHERE j.node_id=$1 AND j.address=$2 AND j.round BETWEEN $3 AND $4 AND j.completed_at>now()-make_interval(secs => $5) AND a.enabled AND a.country='RU'")
+        .bind(node).bind(ip).bind(last-FAILURE_WINDOW_ROUNDS as i64+1).bind(last).bind(FAILURE_WINDOW_SECONDS as f64).fetch_all(&state.db).await?;
+    let mut observations=[Vec::new(),Vec::new(),Vec::new()];
+    for row in rows {
+        let result:Value=row.get("result");let agent:Uuid=row.get("agent_id");let round:i64=row.get("round");
+        let native=result["native"]["reachable"].as_bool();let web=result["web"]["reachable"].as_bool();
+        // An unavailable reference or incomplete transport result is never a server failure.
+        let values=if result["network_ok"]==true {match (native,web){(Some(native),Some(web))=>[Some(native&&web),Some(native),Some(web)],_=>[None;3]}}else{[None;3]};
+        for (index,value) in values.into_iter().enumerate(){observations[index].push((agent,round,value));}
+    }
+    Ok(observations.map(|values|classify(&values,last)))
 }
 pub(crate) async fn health(state:&State,node:Uuid,family:i32)->anyhow::Result<Health> {
     let last=state.probe_round()-1;
     let document:Value=sqlx::query_scalar("SELECT document FROM nodes WHERE id=$1").bind(node).fetch_one(&state.db).await?;
     let ip=document[if family==4{"ipv4"}else{"ipv6"}].as_str().unwrap_or("");
-    let rows=sqlx::query("SELECT j.round,a.network,j.result FROM probe_jobs j JOIN agents a ON a.id=j.agent_id WHERE j.node_id=$1 AND j.family=$2 AND j.round BETWEEN $3-5 AND $3 AND j.address=$4 AND j.completed_at IS NOT NULL AND a.enabled AND a.country='RU' ORDER BY j.round DESC").bind(node).bind(family).bind(last).bind(ip).fetch_all(&state.db).await?;
-    let mut networks:std::collections::HashMap<(i64,String),Vec<bool>>=std::collections::HashMap::new();
-    for row in rows {let result:Value=row.get("result");if result["network_ok"]!=true||result["native"]["reachable"].as_bool().is_none()||result["web"]["reachable"].as_bool().is_none(){continue;}
-        if let Some(reachable)=result["reachable"].as_bool(){networks.entry((row.get("round"),row.get("network"))).or_default().push(reachable);}}
-    let rounds:Vec<_>=(0..6).map(|offset|{let values:Vec<_>=networks.iter().filter(|((round,_),_)|*round==last-offset).map(|(_,v)|v).collect();(values.iter().filter(|v|v.iter().all(|x|*x)).count(),values.iter().filter(|v|v.iter().all(|x|!*x)).count())}).collect();
-    let calculated=classify(&rounds,true);
+    let calculated=evidence(state,node,ip).await?[0];
     let mut tx=state.db.begin().await?;
     sqlx::query("INSERT INTO node_health(node_id,family) VALUES($1,$2) ON CONFLICT DO NOTHING").bind(node).bind(family).execute(&mut *tx).await?;
     let previous=sqlx::query("SELECT status FROM node_health WHERE node_id=$1 AND family=$2 FOR UPDATE").bind(node).bind(family).fetch_one(&mut *tx).await?.get::<String,_>("status");
@@ -79,4 +103,28 @@ pub(crate) async fn health(state:&State,node:Uuid,family:i32)->anyhow::Result<He
     sqlx::query("UPDATE node_health SET status=$3,last_round=$4 WHERE node_id=$1 AND family=$2").bind(node).bind(family).bind(status).bind(last).execute(&mut *tx).await?;
     tx.commit().await?;Ok(result)
 }
-#[cfg(test)]mod tests{use super::*;#[test]fn expired_agent_jobs_remain_unknown_even_with_a_good_reference(){assert!(!known_network(true,"expired"));assert!(!known_network(true,"network_unknown"));assert!(!known_network(false,"tcp"));assert!(known_network(true,"timeout"));}#[test]fn missing_quorum_never_marks_failed(){assert_eq!(classify(&[(0,1);6],true),Health::Unknown);assert_eq!(classify(&[(0,2);6],false),Health::Unknown);}#[test]fn sustained_success_and_failure_have_distinct_thresholds(){assert_eq!(classify(&[(0,2);3],true),Health::Failed);assert_eq!(classify(&[(2,0);2],true),Health::Healthy);assert_eq!(classify(&[(2,0);6],true),Health::Recovered);assert_eq!(classify(&[(2,2);6],true),Health::Failed);}}
+#[cfg(test)]mod tests {
+    use super::*;
+    fn samples(agent:Uuid,count:i64,good:Option<bool>)->Vec<(Uuid,i64,Option<bool>)>{(0..count).map(|offset|(agent,100-offset,good)).collect()}
+    #[test]fn expired_agent_jobs_remain_unknown_even_with_a_good_reference(){assert!(!known_network(true,"expired"));assert!(!known_network(true,"network_unknown"));assert!(!known_network(false,"tcp"));assert!(known_network(true,"timeout"));}
+    #[test]fn failure_requires_ten_distinct_rounds_from_one_current_agent(){
+        let agent=Uuid::from_u128(1);let mut rows=samples(agent,9,Some(false));
+        assert_eq!(classify(&rows,100),Health::Unknown);
+        rows.extend(samples(Uuid::from_u128(2),9,Some(false)));assert_eq!(classify(&rows,100),Health::Unknown);
+        rows.extend(samples(agent,9,Some(false)));assert_eq!(classify(&rows,100),Health::Unknown);
+        rows.push((agent,80,Some(false)));assert_eq!(classify(&rows,100),Health::Unknown);
+        rows.push((agent,81,Some(false)));assert_eq!(classify(&rows,100),Health::Failed);
+        assert_eq!(classify(&rows,101),Health::Unknown);
+        rows.push((agent,100,None));assert_eq!(classify(&rows,100),Health::Unknown);
+    }
+    #[test]fn sustained_success_and_failure_have_distinct_thresholds(){
+        let agent=Uuid::from_u128(1);
+        assert_eq!(classify(&samples(agent,10,Some(false)),100),Health::Failed);
+        assert_eq!(classify(&samples(agent,2,Some(true)),100),Health::Healthy);
+        assert_eq!(classify(&samples(agent,6,Some(true)),100),Health::Recovered);
+        let mut rows:Vec<_>=(0..20).map(|offset|(agent,100-offset,Some(offset%2!=0))).collect();
+        assert_eq!(classify(&rows,100),Health::Failed);
+        rows.extend(samples(Uuid::from_u128(2),6,Some(true)));assert_eq!(classify(&rows,100),Health::Failed);
+        rows.push((agent,100,Some(true)));assert_eq!(classify(&rows,100),Health::Recovered);
+    }
+}

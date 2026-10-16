@@ -260,13 +260,15 @@ External jobs are scoped to their exact address at issuance; a new IP cannot
 inherit its predecessor's health. Scheduling issues the bounded endpoint/agent
 cross product in one database statement. Up to 200 assignments per agent run
 concurrently, each retaining the five-second protocol deadline. Network failure
-remains unknown. A candidate needs two consecutive successful rounds from two
-independent registered Russian networks and an active listener. A previously
+remains unknown. A candidate needs two consecutive successful rounds from one
+registered Russian agent and an active listener. A previously
 failed address needs six successful rounds before reuse.
 
 A manual preview captures the old IP and enrolled DNS state. Automatic rotation
-additionally requires three failed rounds for the current IP, quorum in every
-enrolled address family, readiness, compatibility and a five-minute cooldown.
+additionally requires ten failed checks from the same agent within the last five minutes
+for the current IP, including a failure in the latest completed round. Failures need not
+be consecutive and are never summed across agents. Every enrolled address family must
+have known evidence; readiness, compatibility and the five-minute cooldown still apply.
 The durable workflow is `queued → dns_pending → retiring → succeeded`:
 
 1. Verify assigned address, active reserve listener, readiness and fresh quorum.

@@ -101,7 +101,7 @@ async fn tick_inner(state:&State)->Result<()> {
             if let Some(ip)=doc[key].as_str().filter(|ip|!ip.is_empty()){let current=health(state,node_id,ip).await?;failed|=current==Health::Failed;unknown|=current==Health::Unknown;}}
         let mut status=if unknown{"probe_state_unknown"}else if failed{"no_healthy_ip_reserve"}else{"healthy"};
         if failed&&!unknown {for ip in selected.as_array().ok_or_else(bad)? {let Some(ip)=ip.as_str()else{continue;};let family=ip.parse::<std::net::IpAddr>().map_err(|_|bad())?.is_ipv4();let key=if family{"ipv4"}else{"ipv6"};let Some(old)=doc[key].as_str()else{continue;};if old==ip||!has_listener(&assigned,ip,doc["port"].as_u64().ok_or_else(bad)?)||health(state,node_id,old).await?!=Health::Failed{continue;}
-            if matches!(health(state,node_id,ip).await?,Health::Healthy|Health::Recovered) {match enqueue(state,id,ip,None,"three_failed_rounds_two_independent_networks",None).await{Ok(_)=>status="rotation_queued",Err(error)=>status=error.1,}break;}
+            if matches!(health(state,node_id,ip).await?,Health::Healthy|Health::Recovered) {match enqueue(state,id,ip,None,"ten_failed_checks_one_agent_within_five_minutes",None).await{Ok(_)=>status="rotation_queued",Err(error)=>status=error.1,}break;}
         }}
         sqlx::query("UPDATE ip_pools SET status=$2 WHERE id=$1 AND automatic").bind(id).bind(status).execute(&state.db).await?;
     }Ok(())

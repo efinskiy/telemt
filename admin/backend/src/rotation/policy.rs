@@ -1,5 +1,5 @@
 use super::*;
-use crate::probes::{classify,Health};
+use crate::probes::{evidence,Health};
 
 pub(super) async fn inventory(state:&State,node_id:Uuid)->Result<Value> {
     let (status,response)=node_request(state,node_id,reqwest::Method::GET,"/v1/runtime/interfaces",None,None).await?;
@@ -34,12 +34,7 @@ pub(super) fn listener_plan(listeners:&Value,selected:&Value,document:&Value)->R
 }
 
 pub(super) async fn health(state:&State,node_id:Uuid,ip:&str)->Result<Health> {
-    let last=state.probe_round()-1;
-    let rows=sqlx::query("SELECT j.round,a.network,j.result FROM probe_jobs j JOIN agents a ON a.id=j.agent_id WHERE j.node_id=$1 AND j.address=$2 AND j.round BETWEEN $3-5 AND $3 AND j.completed_at IS NOT NULL AND a.enabled AND a.country='RU'").bind(node_id).bind(ip).bind(last).fetch_all(&state.db).await?;
-    let mut networks:std::collections::HashMap<(i64,String),Vec<bool>>=std::collections::HashMap::new();
-    for row in rows {let result:Value=row.get("result");if result["network_ok"]==true && result["native"]["reachable"].is_boolean() && result["web"]["reachable"].is_boolean() && let Some(good)=result["reachable"].as_bool(){networks.entry((row.get("round"),row.get("network"))).or_default().push(good);}}
-    let rounds:Vec<_>=(0..6).map(|offset|{let values:Vec<_>=networks.iter().filter(|((round,_),_)|*round==last-offset).map(|(_,values)|values).collect();(values.iter().filter(|values|values.iter().all(|good|*good)).count(),values.iter().filter(|values|values.iter().all(|good|!*good)).count())}).collect();
-    let current=classify(&rounds,true);let mut tx=state.db.begin().await?;
+    let current=evidence(state,node_id,ip).await?[0];let mut tx=state.db.begin().await?;
     sqlx::query("INSERT INTO address_health(node_id,address) VALUES($1,$2) ON CONFLICT DO NOTHING").bind(node_id).bind(ip).execute(&mut *tx).await?;
     let previous:String=sqlx::query_scalar("SELECT status FROM address_health WHERE node_id=$1 AND address=$2 FOR UPDATE").bind(node_id).bind(ip).fetch_one(&mut *tx).await?;
     let quarantined=["failed","recovering"].contains(&previous.as_str());let current=if quarantined&&!matches!(current,Health::Failed|Health::Recovered){Health::Unknown}else{current};
@@ -47,17 +42,10 @@ pub(super) async fn health(state:&State,node_id:Uuid,ip:&str)->Result<Health> {
     sqlx::query("UPDATE address_health SET status=$3 WHERE node_id=$1 AND address=$2").bind(node_id).bind(ip).bind(status).execute(&mut *tx).await?;tx.commit().await?;Ok(current)
 }
 
-/// Display independent quorum evidence for each transport, with the same freshness window.
+/// Display each transport using the same single-agent failure window as rotation decisions.
 pub(super) async fn port_health(state:&State,node:Uuid,ip:&str)->Result<[String;2]> {
-    let last=state.probe_round()-1;
-    let rows=sqlx::query("SELECT j.round,a.network,j.result FROM probe_jobs j JOIN agents a ON a.id=j.agent_id WHERE j.node_id=$1 AND j.address=$2 AND j.round BETWEEN $3-5 AND $3 AND j.completed_at IS NOT NULL AND a.enabled AND a.country='RU'").bind(node).bind(ip).bind(last).fetch_all(&state.db).await?;
-    let mut output=[String::new(),String::new()];
-    for (index,key) in ["native","web"].iter().enumerate(){
-        let mut networks:std::collections::HashMap<(i64,String),Vec<bool>>=std::collections::HashMap::new();
-        for row in &rows {let result:Value=row.get("result");if result["network_ok"]==true && let Some(good)=result[*key]["reachable"].as_bool(){networks.entry((row.get("round"),row.get("network"))).or_default().push(good);}}
-        let rounds:Vec<_>=(0..6).map(|offset|{let values:Vec<_>=networks.iter().filter(|((round,_),_)|*round==last-offset).map(|(_,values)|values).collect();(values.iter().filter(|v|v.iter().all(|x|*x)).count(),values.iter().filter(|v|v.iter().all(|x|!*x)).count())}).collect();
-        output[index]=format!("{:?}",classify(&rounds,true)).to_ascii_lowercase();
-    }Ok(output)
+    let health=evidence(state,node,ip).await?;
+    Ok([format!("{:?}",health[1]).to_ascii_lowercase(),format!("{:?}",health[2]).to_ascii_lowercase()])
 }
 
 #[cfg(test)]mod tests {

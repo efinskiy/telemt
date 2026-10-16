@@ -101,7 +101,7 @@ async fn postgres_router_auth_operations_probes_and_dns() {
     sqlx::query("INSERT INTO operations(id,actor,state,request_cipher,results) VALUES($1,$2,'running',$3,$4)").bind(interrupted).bind(sqlx::query_scalar::<_,Uuid>("SELECT id FROM administrators WHERE username='owner'").fetch_one(&state.db).await.unwrap()).bind(cipher).bind(json!([{"node_id":nodes[0],"state":"succeeded"}])).execute(&state.db).await.unwrap();
     operations::recover(&state).await.unwrap();let row=sqlx::query("SELECT state,results FROM operations WHERE id=$1").bind(interrupted).fetch_one(&state.db).await.unwrap();assert_eq!(row.get::<String,_>("state"),"unknown");assert_eq!(row.get::<Value,_>("results").as_array().unwrap().len(),2);
     let mut agents=Vec::new();
-    for network in ["independent-a","independent-b"] {let (_,result,_)=request(&app,"/api/agents","POST",json!({"name":network,"network":network,"country":"RU"}),Some(&owner),true).await;agents.push((Uuid::parse_str(result["data"]["id"].as_str().unwrap()).unwrap(),result["data"]["token"].as_str().unwrap().to_owned()));}
+    for network in ["independent-a"] {let (_,result,_)=request(&app,"/api/agents","POST",json!({"name":network,"network":network,"country":"RU"}),Some(&owner),true).await;agents.push((Uuid::parse_str(result["data"]["id"].as_str().unwrap()).unwrap(),result["data"]["token"].as_str().unwrap().to_owned()));}
     probes::schedule(&state).await.unwrap();
     let response=app.clone().oneshot(Request::builder().uri("/agent/jobs").header("authorization",format!("Bearer {}",agents[0].1)).body(Body::empty()).unwrap()).await.unwrap();let response:Value=serde_json::from_slice(&to_bytes(response.into_body(),1024*1024).await.unwrap()).unwrap();let job=response["data"][0]["id"].clone();
     for expected in [StatusCode::OK,StatusCode::CONFLICT] {let response=app.clone().oneshot(Request::builder().method("POST").uri("/agent/results").header("authorization",format!("Bearer {}",agents[0].1)).header("content-type","application/json").body(Body::from(json!({"id":job,"network_ok":true,"reachable":true,"stage":"ok","latency_ms":1,"native":{"reachable":true,"stage":"ok","latency_ms":1},"web":{"reachable":true,"stage":"ok","latency_ms":1}}).to_string())).unwrap()).await.unwrap();assert_eq!(response.status(),expected);}
@@ -109,6 +109,9 @@ async fn postgres_router_auth_operations_probes_and_dns() {
     dns_enrollment::run(&state,&app,&owner,nodes[0],&mock).await;
     for (index,target) in nodes.iter().enumerate(){for ip in [format!("192.0.2.{}",index+1),format!("2001:db8::{}",index+1)]{rotation_cases::seed(&state,*target,&agents,&ip,true).await;}}
     assert_eq!(probes::health(&state,nodes[0],4).await.unwrap(),probes::Health::Recovered);
+    sqlx::query("UPDATE probe_jobs SET completed_at=now()-interval '301 seconds' WHERE node_id=$1 AND completed_at IS NOT NULL").bind(nodes[0]).execute(&state.db).await.unwrap();
+    assert_eq!(probes::health(&state,nodes[0],4).await.unwrap(),probes::Health::Unknown);
+    sqlx::query("UPDATE probe_jobs SET completed_at=now() WHERE node_id=$1 AND completed_at IS NOT NULL").bind(nodes[0]).execute(&state.db).await.unwrap();
     let mut next_round=state.clone();next_round.probe_round_override=Some(state.probe_round()+1);
     assert_eq!(probes::health(&next_round,nodes[0],4).await.unwrap(),probes::Health::Unknown);
     let (status,response,_)=request(&app,"/api/groups","POST",json!({"name":"proxy","domain":"proxy.test","zone_id":"00000000000000000000000000000000","record_a_id":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","record_aaaa_id":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","active_node":nodes[0],"node_ids":nodes,"token":"test-dns-token"}),Some(&owner),true).await;

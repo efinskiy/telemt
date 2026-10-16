@@ -4,7 +4,7 @@ use super::*;
 pub(super) async fn seed(state:&State,node:Uuid,agents:&[(Uuid,String)],ip:&str,good:bool) {
     sqlx::query("DELETE FROM probe_jobs WHERE node_id=$1 AND address=$2").bind(node).bind(ip).execute(&state.db).await.unwrap();
     let last=state.probe_round()-1;
-    for offset in 0..6 {for (agent,_) in agents {
+    for offset in 0..10 {for (agent,_) in agents {
         sqlx::query("INSERT INTO probe_jobs(id,round,agent_id,node_id,family,address,expires_at,completed_at,result) VALUES($1,$2,$3,$4,$5,$6,now()+interval '1 minute',now(),$7)")
             .bind(Uuid::new_v4()).bind(last-offset).bind(agent).bind(node).bind(if ip.contains(':'){6}else{4}).bind(ip)
             .bind(json!({"network_ok":true,"reachable":good,"native":{"reachable":good},"web":{"reachable":good}})).execute(&state.db).await.unwrap();

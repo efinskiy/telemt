@@ -184,8 +184,9 @@ changes arbitrary records or enables Cloudflare proxying.
 2. Enable shaping with measured capacities; watch rate, wait and exhaustion data.
 3. Add compatible reserves and independently authenticated probes.
 4. Preview and test a manual switch in a dedicated test zone.
-5. Enable automation last. Require three failed rounds from two networks,
-   two successful reserve rounds and fresh readiness. A quarantined node needs
+5. Enable automation last. Require ten failed checks from one agent within five minutes,
+   including a failed latest completed round, two consecutive successful reserve rounds from
+   one agent and fresh readiness. A quarantined node needs
    six successful rounds. Cooldown is five minutes; there is no automatic failback.
 
 Missing quorum, any unknown enrolled address family, no eligible reserve,
@@ -236,17 +237,20 @@ NAT addresses absent from the interface inventory are not accepted.
 3. Preview and apply preparation. Fleet creates an immutable deployment with native MTProxy
    and nginx HTTPS listeners on every selected IP. This deployment restarts telemt and closes
    existing sessions. Wait for its actual acknowledgement and endpoint readiness.
-4. Use at least two independently registered Russian probe networks. Each address gets separate,
+4. Use at least one registered Russian probe agent. Each address gets separate,
    concurrent native FakeTLS/MTProto and HTTPS WEB req_pq/resPQ checks, within five seconds.
 5. Enable local IP autorotation on the pool, and optionally cross-server automation on the group.
    Both are initially disabled and separately stoppable.
 
 A failed published IP is replaced by a prepared healthy IP on the same server first. A switch
 to another server is permitted only after every IP on the current server has confirmed failure.
-Unknown/stale/region-only evidence blocks escalation. A target must belong to the same profile,
+Unknown or stale evidence blocks escalation; a confirmed failure from one network is sufficient. A target must belong to the same profile,
 have acknowledged its desired deployment, and have a confirmed working address for each enrolled
-record family. Three consecutive failed rounds from two independent networks confirm failure;
-two successful rounds admit a fresh reserve; a previously failed address requires six successes.
+record family. Ten failed checks from the same agent within the last five minutes confirm failure, provided
+its latest completed round also failed. Failures need not be consecutive and are never summed
+across agents. An unavailable reference network or an expired/missing report is unknown.
+Two consecutive successful rounds from one agent admit a fresh reserve; a previously failed
+address requires six consecutive successes from one agent.
 Switches retain the five-minute cooldown. Disabling local rotation does not make a healthy or
 unknown local reserve count as failed, so it cannot force cross-server migration.
 
